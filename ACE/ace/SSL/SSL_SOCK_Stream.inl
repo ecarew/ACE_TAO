@@ -56,8 +56,11 @@ ACE_SSL_SOCK_Stream::send_i (const void *buf,
 
     case SSL_ERROR_ZERO_RETURN:
       // The peer has notified us that it is shutting down via the SSL
-      // "close_notify" message so we need to shutdown, too.
-      (void) ::SSL_shutdown (this->ssl_);
+      // "close_notify" message so we need to shutdown, too.  If the
+      // peer is already gone our "close_notify" cannot be delivered;
+      // don't leave that error queued for an unrelated report.
+      if (::SSL_shutdown (this->ssl_) < 0)
+        ::ERR_clear_error ();
 
       return bytes_sent;
 
@@ -183,8 +186,11 @@ ACE_SSL_SOCK_Stream::recv_i (void *buf,
           bytes_read = 0;
 
           // The peer has notified us that it is shutting down via the SSL
-          // "close_notify" message so we need to shutdown, too.
-          (void) ::SSL_shutdown (this->ssl_);
+          // "close_notify" message so we need to shutdown, too.  If the
+          // peer is already gone our "close_notify" cannot be delivered;
+          // don't leave that error queued for an unrelated report.
+          if (::SSL_shutdown (this->ssl_) < 0)
+            ::ERR_clear_error ();
 
           break;
 
@@ -317,11 +323,27 @@ ACE_SSL_SOCK_Stream::close ()
   if (this->ssl_ == 0 || this->get_handle () == ACE_INVALID_HANDLE)
     return 0;  // SSL_SOCK_Stream was never opened.
 
-  // SSL_shutdown() returns 1 on successful shutdown of the SSL
-  // connection, not 0.
+  // SSL_shutdown() returns 1 when the bidirectional shutdown is
+  // complete and 0 when our "close_notify" was sent but the peer's
+  // has not arrived yet.  Neither is an error (SSL_get_error() would
+  // report SSL_ERROR_SYSCALL for 0), and since the socket is closed
+  // below there is no need to wait for the peer's "close_notify".
   int const status = ::SSL_shutdown (this->ssl_);
+  int ssl_error = status >= 0 ? SSL_ERROR_NONE : ::SSL_get_error (this->ssl_, status);
 
-  switch (::SSL_get_error (this->ssl_, status))
+  // If the peer already sent its "close_notify" and then reset the
+  // connection (e.g. it closed with unread data such as TLS 1.3 session
+  // tickets), our "close_notify" cannot be delivered.  The connection
+  // still ended cleanly from the peer's side, so don't report an error.
+  if (ssl_error == SSL_ERROR_SYSCALL
+      && ACE_BIT_ENABLED (::SSL_get_shutdown (this->ssl_), SSL_RECEIVED_SHUTDOWN)
+      && (ACE_OS::set_errno_to_last_error () == EPIPE || errno == ECONNRESET))
+    {
+      ::ERR_clear_error ();
+      ssl_error = SSL_ERROR_NONE;
+    }
+
+  switch (ssl_error)
     {
     case SSL_ERROR_NONE:
       // Reset the SSL object to allow another connection to be made
@@ -342,6 +364,9 @@ ACE_SSL_SOCK_Stream::close ()
     default:
       ACE_SSL_Context::report_error ();
 
+      // The connection is unusable; reset the SSL object so that a
+      // reconnect through this instance performs a fresh handshake.
+      ::SSL_clear (this->ssl_);
       this->set_handle (ACE_INVALID_HANDLE);
       ACE_Errno_Guard error (errno);   // Save/restore errno
       this->stream_.close ();
