@@ -39,6 +39,7 @@
 #include "ace/Acceptor.h"
 #include "ace/Thread_Manager.h"
 #include "ace/TP_Reactor.h"
+#include "ace/Signal.h"
 #include "ace/SSL/SSL_SOCK_Connector.h"
 #include "ace/SSL/SSL_SOCK_Acceptor.h"
 
@@ -228,6 +229,17 @@ cli_worker (void *arg)
           ACE_OS::sleep (delay);
         }
 
+      // Do a bidirectional TLS shutdown: send our "close_notify" and
+      // read until the server's arrives.  This also consumes data the
+      // server sent unprompted (e.g. TLS 1.3 session tickets); closing
+      // with it unread resets the connection, which can discard our
+      // "close_notify" before the server reads it.
+      ::SSL_shutdown (stream.ssl ());
+      ACE_Time_Value const drain_timeout (5);
+      char drain[BUFSIZ];
+      while (stream.recv (drain, sizeof drain, &drain_timeout) > 0)
+        ;
+
       stream.close ();
     }
 
@@ -303,6 +315,13 @@ run_main (int argc, ACE_TCHAR *argv[])
     }
 
   parse_arg (argc, argv);
+
+  // Ensure an error, not a signal, on broken pipe.  A server's
+  // "close_notify" can be written after the client has already reset
+  // the connection.
+  ACE_Sig_Action no_sigpipe ((ACE_SignalHandler) SIG_IGN);
+  ACE_Sig_Action original_action;
+  no_sigpipe.register_action (SIGPIPE, &original_action);
 
   // Changed the default
   ACE_TP_Reactor sr;
