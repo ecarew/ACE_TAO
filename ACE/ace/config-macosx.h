@@ -32,4 +32,11 @@
 #error Cannot detect MacOSX SDK version
 #endif
 
+// macOS resets connection attempts that arrive while the listen queue is full
+// (Linux drops the SYN and lets the client retry), so the generic default of
+// 5 makes bursts of more than a few simultaneous connects fail outright.
+#if !defined (ACE_DEFAULT_BACKLOG)
+#  define ACE_DEFAULT_BACKLOG SOMAXCONN
+#endif /* ACE_DEFAULT_BACKLOG */
+
 #endif // ACE_CONFIG_MACOSX_ALL_H
