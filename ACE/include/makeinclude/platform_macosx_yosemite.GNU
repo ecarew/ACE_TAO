@@ -6,4 +6,4 @@ include $(ACE_ROOT)/include/makeinclude/platform_macosx_mavericks.GNU
 SOFLAGS	+= -install_name @rpath/$(notdir $@)
 space := $(subst ,, )
 
-LDFLAGS += $(foreach libpath,$(LIBPATHS),-rpath $(if $(filter "/%,$(subst $(space),;,$(libpath))),$(libpath),@executable_path/$(libpath)))
+LDFLAGS += $(foreach libpath,$(LIBPATHS),-rpath $(if $(filter "/% /%,$(subst $(space),;,$(libpath))),$(libpath),@executable_path/$(libpath)))
