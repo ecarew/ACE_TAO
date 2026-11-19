@@ -32,6 +32,7 @@ LD               = $(CXX)
 #LIBS += -lstdc++.6 -lSystem -lSystemStubs
 
 OCFLAGS  += -O2
+OCCFLAGS += -O2
 RANLIB    = ranlib
 SOEXT     = dylib
 SOFLAGS  += -dynamiclib
