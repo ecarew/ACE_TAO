@@ -127,6 +127,13 @@ namespace TAO
       /// The connection service handler used for accessing lower layer
       /// communication protocols.
       Connection_Handler *connection_handler_;
+
+      /// An OpenSSL session must not be used by two threads at once.
+      /// TAO serializes writes on a transport but not reads against
+      /// writes, so with a reactor-driven (non-blocking) connection a
+      /// thread reading a reply could otherwise run SSL_read() while
+      /// another sends a request with SSL_write() on the same session.
+      TAO_SYNCH_MUTEX ssl_lock_;
     };
   }  // End SSLIOP namespace.
 }  // End TAO namespace.

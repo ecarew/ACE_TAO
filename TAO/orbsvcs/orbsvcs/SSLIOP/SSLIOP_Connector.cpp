@@ -707,11 +707,16 @@ TAO::SSLIOP::Connector::ssliop_connect (
                         remote_address.get_port_number (),
                         svc_handler->peer ().get_handle ()));
 
-          // Add the handler to Cache
+          // Add the handler to Cache.  We use the new transport right
+          // away (unlike TAO_Connector::connect, which picks it up from
+          // the cache), so it must be cached as busy: cached as idle,
+          // another thread can take it from the cache at the same time
+          // and two invocations end up sharing one connection.
           int retval =
             this->orb_core ()->
               lane_resources ().transport_cache ().cache_transport (desc,
-                                                                    transport);
+                                                                    transport,
+                                                                    TAO::ENTRY_BUSY);
 
           // Failure in adding to cache.
           if (retval == -1)

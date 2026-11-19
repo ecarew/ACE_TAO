@@ -64,8 +64,11 @@ TAO::SSLIOP::Transport::send (iovec *iov,
                               size_t &bytes_transferred,
                               const ACE_Time_Value *max_wait_time)
 {
-  ssize_t const retval =
-    this->connection_handler_->peer ().sendv (iov, iovcnt, max_wait_time);
+  ssize_t retval;
+  {
+    ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, guard, this->ssl_lock_, -1);
+    retval = this->connection_handler_->peer ().sendv (iov, iovcnt, max_wait_time);
+  }
 
   if (retval > 0)
     bytes_transferred = retval;
@@ -78,9 +81,19 @@ TAO::SSLIOP::Transport::recv (char *buf,
                               size_t len,
                               const ACE_Time_Value *max_wait_time)
 {
-  ssize_t const n = this->connection_handler_->peer ().recv (buf,
-                                                             len,
-                                                             max_wait_time);
+  ssize_t n;
+  if (this->wait_strategy ()->non_blocking ())
+    {
+      ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, guard, this->ssl_lock_, -1);
+      n = this->connection_handler_->peer ().recv (buf, len, max_wait_time);
+    }
+  else
+    {
+      // A blocking read can wait indefinitely, so it must not hold the
+      // lock; in the blocking strategies the thread reading here is the
+      // only one using the connection.
+      n = this->connection_handler_->peer ().recv (buf, len, max_wait_time);
+    }
 
   // Most of the errors handling is common for
   // Now the message has been read
