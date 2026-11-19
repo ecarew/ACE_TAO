@@ -655,7 +655,10 @@ namespace TAO
               default:
                 break;
               }
-            if (!retry_on_exception)
+            // Exceptions without a FOE_ flag (e.g. BAD_PARAM, NO_PERMISSION)
+            // map to FOE_NON; they must never trigger a forward, otherwise
+            // any such exception makes the client retry on the next profile.
+            if (!retry_on_exception && ex_id != TAO::FOE_NON)
               {
                 do_forward = !this->stub ()->forwarded_on_exception () &&
                   ((foe_kind & ex_id) == ex_id);
