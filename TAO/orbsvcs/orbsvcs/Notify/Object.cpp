@@ -265,14 +265,26 @@ TAO_Notify_Object::set_qos (const CosNotification::QoSProperties & qos)
     TAO_Notify_PROPERTIES::instance()->builder()->
     apply_lane_concurrency (*this, new_qos_properties.thread_pool_lane ().value ());
 
+  // Properties not given here keep their current (possibly inherited)
+  // values.  The thread task applied above may be new (e.g. a proxy's own
+  // task for -AllocateTaskperProxy) with a fresh buffering strategy, so it
+  // must get the merged set; given only <qos> it would never see inherited
+  // MaxEventsPerConsumer, DiscardPolicy or BlockingPolicy.
+  // (Unsupported properties were already reported into err_seq above.)
+  TAO_Notify_QoSProperties merged_qos_properties;
+  CosNotification::PropertyErrorSeq merge_err_seq;
+  if (this->qos_properties_.copy (merged_qos_properties) == -1
+      || merged_qos_properties.init (qos, merge_err_seq) == -1)
+    throw CORBA::INTERNAL ();
+
   // Update the Thread Task's QoS properties..
-  this->worker_task_->update_qos_properties (new_qos_properties);
+  this->worker_task_->update_qos_properties (merged_qos_properties);
 
   // Inform subclasses of QoS changed.
-  this->qos_changed (new_qos_properties);
+  this->qos_changed (merged_qos_properties);
 
   // Init the the overall QoS on this object.
-  if (new_qos_properties.copy (this->qos_properties_) == -1)
+  if (merged_qos_properties.copy (this->qos_properties_) == -1)
     throw CORBA::INTERNAL ();
 
   if (err_seq.length () > 0) // Unsupported Property

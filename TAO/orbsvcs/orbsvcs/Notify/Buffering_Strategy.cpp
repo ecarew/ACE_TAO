@@ -61,6 +61,15 @@ TAO_Notify_Buffering_Strategy::shutdown ()
 
   this->shutdown_ = true;
 
+  // Events still queued (e.g. for a consumer that died or disconnected) will
+  // never be delivered.  Release them and give their slots back to the
+  // channel-wide count; otherwise each departing consumer with a backlog
+  // leaks its share, and once the leaks reach MaxQueueLength a channel with
+  // RejectNewEvents refuses every event from then on.
+  this->global_queue_length_ -=
+    static_cast<CORBA::Long> (this->msg_queue_.message_count ());
+  this->msg_queue_.flush ();
+
   this->local_not_empty_.broadcast ();
   this->global_not_full_.broadcast();
   this->local_not_full_.broadcast();
