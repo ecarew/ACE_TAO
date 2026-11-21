@@ -96,7 +96,10 @@ Notify_Structured_Push_Consumer::push_structured_event (
     if (first_ != sent_ - max_events_per_consumer_ + 1)
       --expected;
   }
-  else if (discard_policy_ == CosNotification::FifoOrder)
+  else if (discard_policy_ == CosNotification::FifoOrder
+           // The suppliers give later events later deadlines, so the
+           // earliest deadline is also the oldest event.
+           || discard_policy_ == CosNotification::DeadlineOrder)
   {
     expected = sent_ - max_events_per_consumer_ + count_;
     if (first_ != sent_ - max_events_per_consumer_ + 1)

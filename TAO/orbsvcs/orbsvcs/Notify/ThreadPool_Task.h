@@ -16,6 +16,7 @@
 #include "orbsvcs/Notify/Timer_Queue.h"
 #include "orbsvcs/Notify/AdminProperties.h"
 #include "orbsvcs/Notify/Worker_Task.h"
+#include "orbsvcs/Notify/Buffering_Strategy.h"
 
 #include "ace/Task.h"
 #include "ace/Message_Queue.h"
@@ -80,6 +81,10 @@ protected:
 private:
   /// Release
   virtual void release ();
+
+  /// The event queue, installed as this task's message queue.  Declared
+  /// before buffering_strategy_, which refers to it, so it outlives it.
+  TAO_Notify_Message_Queue event_queue_;
 
   /// The buffering strategy to use.
   std::unique_ptr<TAO_Notify_Buffering_Strategy> buffering_strategy_;

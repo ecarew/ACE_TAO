@@ -100,13 +100,6 @@ Supplier_Client::parse_args (int argc, ACE_TCHAR *argv[])
   {
     case 'd':
       use_deadline_ordering = 1;
-#if !defined (ACE_HAS_TIMED_MESSAGE_BLOCKS)
-      ACE_ERROR_RETURN ((LM_ERROR,
-        "This order policy requires timed message "
-        "blocks.\nPlease #define "
-        "ACE_HAS_TIMED_MESSAGE_BLOCKS in your "
-        "config.h\n"), -1);
-#endif /* ACE_HAS_TIMED_MESSAGE_BLOCKS */
       break;
     case 'e':
       num_events = ACE_OS::atoi (get_opts.optarg);

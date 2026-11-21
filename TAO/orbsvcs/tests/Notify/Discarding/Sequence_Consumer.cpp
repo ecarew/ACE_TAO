@@ -63,13 +63,6 @@ Consumer_Client::parse_args (int argc, ACE_TCHAR *argv[])
         else if (ACE_OS::strcmp (discard, ACE_TEXT ("deadline")) == 0)
         {
           discard_policy = CosNotification::DeadlineOrder;
-#if !defined (ACE_HAS_TIMED_MESSAGE_BLOCKS)
-          ACE_ERROR_RETURN ((LM_ERROR,
-            "This order policy requires timed message "
-            "blocks.\nPlease #define "
-            "ACE_HAS_TIMED_MESSAGE_BLOCKS in your "
-            "config.h\n"), -1);
-#endif
         }
         else
         {

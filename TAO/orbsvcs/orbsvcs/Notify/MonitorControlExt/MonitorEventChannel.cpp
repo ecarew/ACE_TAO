@@ -1206,7 +1206,7 @@ TAO_MonitorEventChannel::calculate_queue_size (bool count)
 
       if (task != 0)
         {
-          TAO_Notify_Message_Queue* queue = task->msg_queue ();
+          ACE_Message_Queue<ACE_NULL_SYNCH>* queue = task->msg_queue ();
 
           if (count)
             {
@@ -1245,7 +1245,7 @@ TAO_MonitorEventChannel::determine_slowest_consumer (
 
       if (task != 0)
         {
-          TAO_Notify_Message_Queue* queue = task->msg_queue ();
+          ACE_Message_Queue<ACE_NULL_SYNCH>* queue = task->msg_queue ();
           size_t count = queue->message_count ();
 
           if (count > largest)

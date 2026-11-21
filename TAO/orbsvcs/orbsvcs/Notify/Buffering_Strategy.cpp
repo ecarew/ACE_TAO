@@ -15,6 +15,90 @@
 
 TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 
+namespace
+{
+  const ACE_Time_Value &
+  request_deadline (const ACE_Message_Block *mb)
+  {
+    const TAO_Notify_Method_Request_Queueable *request =
+      dynamic_cast<const TAO_Notify_Method_Request_Queueable *> (mb);
+    return request == nullptr ? ACE_Time_Value::max_time : request->deadline ();
+  }
+}
+
+int
+TAO_Notify_Message_Queue::enqueue_deadline_i (ACE_Message_Block *new_item)
+{
+  if (new_item == nullptr)
+    return -1;
+
+  // This method does not support chains of blocks off the next pointer.
+  new_item->next (nullptr);
+
+  const ACE_Time_Value &deadline = request_deadline (new_item);
+
+  ACE_Message_Block *later = this->head_;
+  while (later != nullptr && !(deadline < request_deadline (later)))
+    later = later->next ();
+
+  if (later == nullptr)
+    return this->enqueue_tail_i (new_item);
+
+  if (later == this->head_)
+    return this->enqueue_head_i (new_item);
+
+  new_item->prev (later->prev ());
+  new_item->next (later);
+  later->prev ()->next (new_item);
+  later->prev (new_item);
+
+  new_item->total_size_and_length (this->cur_bytes_, this->cur_length_);
+  ++this->cur_count_;
+
+  if (this->signal_dequeue_waiters () == -1)
+    return -1;
+
+  return ACE_Utils::truncate_cast<int> (this->cur_count_);
+}
+
+int
+TAO_Notify_Message_Queue::dequeue_deadline_i (ACE_Message_Block *&dequeued)
+{
+  if (this->head_ == nullptr)
+    return -1;
+
+  ACE_Message_Block *chosen = this->head_;
+  for (ACE_Message_Block *mb = this->head_->next (); mb != nullptr; mb = mb->next ())
+    if (request_deadline (mb) < request_deadline (chosen))
+      chosen = mb;
+
+  if (chosen == this->head_)
+    return this->dequeue_head_i (dequeued);
+
+  if (chosen == this->tail_)
+    return this->dequeue_tail_i (dequeued);
+
+  chosen->prev ()->next (chosen->next ());
+  chosen->next ()->prev (chosen->prev ());
+  chosen->prev (nullptr);
+  chosen->next (nullptr);
+
+  size_t mb_bytes = 0;
+  size_t mb_length = 0;
+  chosen->total_size_and_length (mb_bytes, mb_length);
+  this->cur_bytes_ -= mb_bytes;
+  this->cur_length_ -= mb_length;
+  --this->cur_count_;
+
+  dequeued = chosen;
+
+  if (this->cur_bytes_ <= this->low_water_mark_
+      && this->signal_enqueue_waiters () == -1)
+    return -1;
+
+  return ACE_Utils::truncate_cast<int> (this->cur_count_);
+}
+
 TAO_Notify_Buffering_Strategy::TAO_Notify_Buffering_Strategy (
   TAO_Notify_Message_Queue& msg_queue,
   const TAO_Notify_AdminProperties::Ptr& admin_properties)

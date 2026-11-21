@@ -14,6 +14,9 @@ TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 TAO_Notify_ThreadPool_Task::TAO_Notify_ThreadPool_Task ()
 : shutdown_ (false)
 {
+  // Replace ACE_Task's default queue with one that orders by the
+  // requests' deadlines.  This task keeps ownership.
+  this->msg_queue (&this->event_queue_);
 }
 
 TAO_Notify_ThreadPool_Task::~TAO_Notify_ThreadPool_Task ()
@@ -52,7 +55,7 @@ TAO_Notify_ThreadPool_Task::init (const NotifyExt::ThreadPoolParams& tp_params,
 
   TAO_Notify_Buffering_Strategy* buffering_strategy = nullptr;
   ACE_NEW_THROW_EX (buffering_strategy,
-                    TAO_Notify_Buffering_Strategy (*msg_queue (), admin_properties),
+                    TAO_Notify_Buffering_Strategy (this->event_queue_, admin_properties),
                     CORBA::NO_MEMORY ());
   this->buffering_strategy_.reset (buffering_strategy);
 

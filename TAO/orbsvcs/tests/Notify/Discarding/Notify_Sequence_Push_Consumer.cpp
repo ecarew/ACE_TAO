@@ -128,7 +128,10 @@ Notify_Sequence_Push_Consumer::push_structured_events (
   {
     expected = sent_ - BATCH_SIZE + 1; // e.g. 37, 38, 39, 40
   }
-  else if (discard_policy_ == CosNotification::FifoOrder)
+  else if (discard_policy_ == CosNotification::FifoOrder
+           // The suppliers give later events later deadlines, so the
+           // earliest deadline is also the oldest event.
+           || discard_policy_ == CosNotification::DeadlineOrder)
   {
     expected = sent_ - BATCH_SIZE + 1; // e.g. 37, 38, 39, 40
   }

@@ -30,7 +30,31 @@ TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 class TAO_Notify_Method_Request_Queueable;
 class TAO_Notify_QoSProperties;
 
-using TAO_Notify_Message_Queue = ACE_Message_Queue<ACE_NULL_SYNCH>;
+/**
+ * @class TAO_Notify_Message_Queue
+ *
+ * @brief The Notify event queue: an ACE_Message_Queue whose deadline
+ * operations use the deadline of each TAO_Notify_Method_Request_Queueable.
+ *
+ * ACE_Message_Queue orders and picks by ACE_Message_Block::msg_deadline_time(),
+ * which only holds a value when ACE_HAS_TIMED_MESSAGE_BLOCKS is defined
+ * (INTEGRITY); elsewhere enqueue_deadline() appends and dequeue_deadline()
+ * takes the head, so the DeadlineOrder order and discard policies had no
+ * effect.
+ */
+class TAO_Notify_Serv_Export TAO_Notify_Message_Queue
+  : public ACE_Message_Queue<ACE_NULL_SYNCH>
+{
+protected:
+  /// Insert before the first request with a later deadline, so requests
+  /// with equal deadlines stay in FIFO order.  Requests without a deadline
+  /// go to the tail.
+  int enqueue_deadline_i (ACE_Message_Block *new_item) override;
+
+  /// Remove the request with the earliest deadline (the first one, if
+  /// several share it); the head if none has a deadline.
+  int dequeue_deadline_i (ACE_Message_Block *&first_item) override;
+};
 
 /**
  * @class TAO_Notify_Buffering_Strategy

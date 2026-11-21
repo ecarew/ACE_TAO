@@ -228,6 +228,60 @@ $stc->DeleteFile ($iorbase);
 
 
 
+
+print "**** Structured Supplier (fifo) -> Structured Consumer (deadline) *****\n";
+$STS->Arguments($STS->Arguments() . " -d fifo");
+$STS_status = $STS->Spawn ();
+if ($STS_status != 0) {
+    print STDERR "ERROR: Structured Supplier returned $STS_status\n";
+    exit 1;
+}
+if ($sts->WaitForFileTimed ($iorbase,$sts->ProcessStartWaitInterval()) == -1) {
+    print STDERR "ERROR: cannot find file <$sts_iorfile>\n";
+    $STS->Kill (); $STS->TimedWait (1);
+    $NS->Kill (); $NS->TimedWait (1);
+    $NFS->Kill (); $NFS->TimedWait (1);
+    exit 1;
+}
+if ($sts->GetFile ($iorbase) == -1) {
+    print STDERR "ERROR: cannot retrieve file <$sts_iorfile>\n";
+    $STS->Kill (); $STS->TimedWait (1);
+    $NS->Kill (); $NS->TimedWait (1);
+    $NFS->Kill (); $NFS->TimedWait (1);
+    exit 1;
+}
+if ($stc->PutFile ($iorbase) == -1) {
+    print STDERR "ERROR: cannot set file <$stc_iorfile>\n";
+    $STS->Kill (); $STS->TimedWait (1);
+    $NS->Kill (); $NS->TimedWait (1);
+    $NFS->Kill (); $NFS->TimedWait (1);
+    exit 1;
+}
+sleep 2;
+
+$STC->Arguments($CLI_args . " -k file://$stc_iorfile -d deadline -o");
+$STC_status = $STC->SpawnWaitKill ($stc->ProcessStartWaitInterval()+5);
+if ($STC_status != 0) {
+    print STDERR "ERROR: Structured Consumer returned $STC_status\n";
+    $STS->Kill (); $STS->TimedWait (1);
+    $NS->Kill (); $NS->TimedWait (1);
+    $NFS->Kill (); $NFS->TimedWait (1);
+    exit 1;
+}
+
+$STS_status = $STS->WaitKill ($sts->ProcessStopWaitInterval());
+if ($STS_status != 0) {
+    print STDERR "ERROR: Structured Supplier returned $STS_status\n";
+    $NS->Kill (); $NS->TimedWait (1);
+    $NFS->Kill (); $NFS->TimedWait (1);
+    exit 1;
+}
+
+$sts->DeleteFile ($iorbase);
+$stc->DeleteFile ($iorbase);
+
+
+
 print "**** Structured Supplier (fifo) -> Sequence Consumer (priority) *****\n";
 $STS->Arguments($STS->Arguments() . " -d fifo");
 $STS_status = $STS->Spawn ();

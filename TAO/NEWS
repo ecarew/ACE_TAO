@@ -33,6 +33,14 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
   headers only to sort events will now lose those events once the Timeout
   passes; give each event a Timeout that is a real lifetime.
 
+. The Notification Service's DeadlineOrder OrderPolicy and DiscardPolicy now
+  work without ACE_HAS_TIMED_MESSAGE_BLOCKS. Its queues order and pick events
+  by the deadline Notify stores for each event instead of the ACE message
+  block deadline, which is only kept on INTEGRITY; elsewhere DeadlineOrder
+  behaved like FIFO. The Ordering and Discarding tests no longer refuse
+  their deadline modes, and a new unit test, tests/unit/Notify/Deadline_Queue,
+  checks the queue directly.
+
 USER VISIBLE CHANGES BETWEEN TAO-4.0.7 and TAO-4.0.8
 ====================================================
 

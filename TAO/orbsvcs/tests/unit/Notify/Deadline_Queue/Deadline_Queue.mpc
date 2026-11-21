@@ -1,0 +1,4 @@
+// -*- MPC -*-
+project: notification_serv {
+  exename = Deadline_Queue
+}
