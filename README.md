@@ -28,4 +28,5 @@ All support on github is **best effort**, when you require a guaranteed response
 - **SSLIOP certificate chains:** a PEM `-SSLCertificate` file now sends its intermediate CA certificates too, so peers need only the root CA.
 - **ORB invocation retries:** clients no longer retry the next IOR profile after unrelated system exceptions. This removes multi-minute hangs on hosts with several network interfaces (e.g. a VPN).
 - **Notification Service:** per-consumer queue limits now work when each consumer has its own delivery thread, and a consumer that leaves no longer leaks its queued events from the channel-wide count. Before, one stalled consumer could make the channel refuse all events permanently.
+- **Notification Service event expiry:** queued events past their Timeout (the event's own, or the proxy, admin or channel Timeout QoS) are dropped instead of delivered late. Before, Timeout was ignored on every platform but INTEGRITY. Suppliers that used tiny header Timeouts only as sort keys will now lose those events.
 - **CLAUDE.md:** build, test and architecture notes for working on the code base.
