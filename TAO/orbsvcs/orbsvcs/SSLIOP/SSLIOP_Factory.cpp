@@ -691,9 +691,17 @@ TAO::SSLIOP::Protocol_Factory::init (int argc, ACE_TCHAR* argv[])
   // ACE_SSL_Context attempts to check the private key for
   // consistency.  That check requires the certificate to be available
   // in the underlying SSL_CTX.
+  //
+  // A PEM file may hold the certificate followed by its intermediate CA
+  // certificates; load them all so the peer is sent the whole chain and
+  // needs only the root.  An ASN.1 (DER) file holds a single certificate.
   if (certificate_path.in() != nullptr)
     {
-      if (ssl_ctx->certificate (certificate_path.in(), certificate_type) != 0)
+      int const result =
+        certificate_type == SSL_FILETYPE_PEM
+        ? ssl_ctx->certificate_chain (certificate_path.in(), certificate_type)
+        : ssl_ctx->certificate (certificate_path.in(), certificate_type);
+      if (result != 0)
         {
           ORBSVCS_ERROR ((LM_ERROR,
                           ACE_TEXT ("TAO (%P|%t) - Unable to set ")

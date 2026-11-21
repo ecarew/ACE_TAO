@@ -116,7 +116,10 @@ function MM_nbGroup(event, grpName) { //v3.0
       <td> Set the name of the file that contains the certificate for this process.
         The file can be in Privacy Enhanced Mail (<code>PEM</code>) format or
         ASN.1 (<code>ASN1</code>). Remember that the certificate must be signed
-        by a Certificate Authority recognized by the client. </td>
+        by a Certificate Authority recognized by the client. A <code>PEM</code>
+        file may also hold the intermediate CA certificates after the process's
+        own certificate; they are sent to the peer as the certificate chain, so
+        the peer needs only the root CA. </td>
     </tr>
     <tr>
       <td><code>-SSLPrivateKey</code> <em>FORMAT:filename</em></td>

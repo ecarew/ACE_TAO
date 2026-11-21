@@ -9,6 +9,11 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
   discriminator would select a different union member. Discriminator values
   selecting the currently active member remain accepted.
 
+. SSLIOP now loads every certificate in a PEM -SSLCertificate file, so a
+  certificate followed by its intermediate CA certificates is sent to peers as
+  a full chain. Previously only the first certificate was used, and peers that
+  trusted just the root CA failed the handshake.
+
 USER VISIBLE CHANGES BETWEEN TAO-4.0.7 and TAO-4.0.8
 ====================================================
 
