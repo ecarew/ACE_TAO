@@ -41,6 +41,13 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
   their deadline modes, and a new unit test, tests/unit/Notify/Deadline_Queue,
   checks the queue directly.
 
+. Notification Service topology persistence now survives a normal shutdown.
+  On shutdown the service destroyed every channel, and each destroy was saved,
+  so the topology file was empty and the next start had nothing to restore;
+  only a crash kept it. With a Topology_Factory configured, channels are now
+  shut down instead of destroyed, and nothing is saved once the factory has
+  shut down.
+
 USER VISIBLE CHANGES BETWEEN TAO-4.0.7 and TAO-4.0.8
 ====================================================
 

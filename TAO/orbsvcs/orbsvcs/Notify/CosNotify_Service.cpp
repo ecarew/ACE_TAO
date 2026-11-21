@@ -356,6 +356,15 @@ TAO_CosNotify_Service::finalize_service (
   CosNotifyChannelAdmin::EventChannelFactory_var ecf =
     CosNotifyChannelAdmin::EventChannelFactory::_duplicate (factory);
 
+  TAO_Notify_EventChannelFactory* necf =
+    dynamic_cast<TAO_Notify_EventChannelFactory*> (ecf->_servant ());
+
+  // With topology persistence the channels must survive the shutdown: the
+  // next start restores them from the saved topology.  destroy() would
+  // remove each one from that topology, as if a client had destroyed it,
+  // so only shut them down (which stops their worker tasks) instead.
+  bool const keep_channels = necf != nullptr && necf->saves_topology ();
+
   // Find all the consumer admin objects and shutdown the worker tasks
   CosNotifyChannelAdmin::ChannelIDSeq_var channels =
     ecf->get_all_channels ();
@@ -371,7 +380,12 @@ TAO_CosNotify_Service::finalize_service (
               TAO_Notify_EventChannel* nec =
                 dynamic_cast<TAO_Notify_EventChannel*> (ec->_servant ());
               if (nec != 0)
-                nec->destroy ();
+                {
+                  if (keep_channels)
+                    nec->shutdown ();
+                  else
+                    nec->destroy ();
+                }
             }
         }
       catch (const CORBA::Exception&)
@@ -379,9 +393,6 @@ TAO_CosNotify_Service::finalize_service (
           // We're shutting things down, so ignore exceptions
         }
     }
-
-  TAO_Notify_EventChannelFactory* necf =
-    dynamic_cast<TAO_Notify_EventChannelFactory*> (ecf->_servant ());
 
   if (necf != 0)
     necf->stop_validator();

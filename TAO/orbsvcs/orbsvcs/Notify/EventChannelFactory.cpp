@@ -265,6 +265,12 @@ TAO_Notify_EventChannelFactory::is_persistent () const
   return true;
 }
 
+bool
+TAO_Notify_EventChannelFactory::saves_topology () const
+{
+  return this->topology_factory_ != nullptr;
+}
+
 void
 TAO_Notify_EventChannelFactory::save_persistent (TAO_Notify::Topology_Saver& saver)
 {
@@ -337,7 +343,9 @@ bool
 TAO_Notify_EventChannelFactory::change_to_parent ()
 {
   bool saving = false;
-  if (! this->loading_topology_)
+  // Nothing that happens while the service shuts down is a change to keep;
+  // saving it would overwrite the topology the next start should restore.
+  if (! this->loading_topology_ && ! this->has_shutdown ())
   {
     // A null pointer means that saving of topology is disabled.
     if (this->topology_factory_ != nullptr)

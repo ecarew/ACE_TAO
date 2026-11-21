@@ -91,6 +91,10 @@ public:
   /// Does not take ownership.
   void set_topology_factory(TAO_Notify::Topology_Factory* sf);
 
+  /// True if topology persistence is configured (a Topology_Factory is
+  /// loaded), so the topology is saved as it changes.
+  bool saves_topology () const;
+
   //-- Topology_Parent
 
   virtual bool is_persistent () const;
