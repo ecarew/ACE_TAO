@@ -66,11 +66,15 @@ namespace TAO
 
       /**
        * The type of table that maps acquisition method to acquirer
-       * factory.
+       * factory.  ACE_Equal_To<const char *> compares the method names
+       * as strings; ACE_Map_Manager would compare the pointers, so no
+       * lookup could find the copy stored at registration.
        */
-      using Acquirer_Factory_Table = ACE_Map_Manager<const char *,
-                                                      TAO::SL3::CredentialsAcquirerFactory *,
-                                                      ACE_Null_Mutex>;
+      using Acquirer_Factory_Table = ACE_Hash_Map_Manager_Ex<const char *,
+                                                              TAO::SL3::CredentialsAcquirerFactory *,
+                                                              ACE_Hash<const char *>,
+                                                              ACE_Equal_To<const char *>,
+                                                              ACE_Null_Mutex>;
       using Factory_Iterator = Acquirer_Factory_Table::iterator;
 
       using Credentials_Table = ACE_Hash_Map_Manager_Ex<const char *,

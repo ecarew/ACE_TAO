@@ -14,6 +14,14 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
   a full chain. Previously only the first certificate was used, and peers that
   trusted just the root CA failed the handshake.
 
+. SecurityLevel3 credential acquisition works: CredentialsCurator kept the
+  acquisition methods in an ACE_Map_Manager keyed on const char *, which
+  compares pointers, so acquire_credentials ("SL3TLS", ...) always raised
+  CORBA::BAD_PARAM. SSLIOP credentials acquired from a PEM certificate file
+  now also carry the intermediate CA certificates that follow the first one,
+  and an invocation using them sends exactly that chain instead of the one
+  belonging to the default certificate.
+
 . The Notification Service now drops queued events whose Timeout has passed
   instead of delivering them late. The deadline comes from the event's own
   Timeout header, or else from the Timeout QoS of its proxy, admin or channel,

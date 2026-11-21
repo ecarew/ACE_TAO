@@ -59,6 +59,14 @@ namespace TAO
       /// Constructor
       OwnCredentials (::X509 *cert, ::EVP_PKEY *evp);
 
+      /// Constructor with the intermediate CA certificates to send
+      /// after @a cert.  @a chain is copied; it may be null.
+      OwnCredentials (::X509 *cert, ::EVP_PKEY *evp, STACK_OF (X509) *chain);
+
+      /// The intermediate CA certificates sent after the certificate,
+      /// or null if there are none.  Still owned by this object.
+      STACK_OF (X509) *chain () const;
+
       static OwnCredentials_ptr _duplicate (OwnCredentials_ptr obj);
       static OwnCredentials_ptr _nil ();
       static OwnCredentials_ptr _narrow (CORBA::Object_ptr obj);
@@ -94,6 +102,10 @@ namespace TAO
        * through the reference counting mechanism.
        */
       ~OwnCredentials ();
+
+    private:
+      /// Intermediate CA certificates, or null.
+      STACK_OF (X509) *chain_;
     };
   } // End SSLIOP namespace
 }  // End TAO namespace

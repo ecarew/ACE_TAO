@@ -27,6 +27,7 @@
 #include "tao/LocalObject.h"
 
 #include <openssl/opensslconf.h>
+#include <openssl/x509.h>
 
 #if defined(_MSC_VER)
 #pragma warning(push)
@@ -100,8 +101,12 @@ namespace TAO
       /// i.e. hasn't been destroyed.
       void check_validity ();
 
-      /// Create an OpenSSL X.509 certificate data structure.
-      static ::X509 * make_X509 (const ::SSLIOP::File &certificate);
+      /// Create an OpenSSL X.509 certificate data structure.  If @a chain
+      /// is not null and the file is PEM, the certificates that follow
+      /// the first one (its intermediate CAs) are returned in a new
+      /// stack in @a *chain, or null if there are none.
+      static ::X509 * make_X509 (const ::SSLIOP::File &certificate,
+                                 STACK_OF (X509) **chain = nullptr);
 
       /// Create an OpenSSL EVP_PKEY key data structure.
       static ::EVP_PKEY * make_EVP_PKEY (const ::SSLIOP::File &key);

@@ -819,6 +819,16 @@ TAO::SSLIOP::Connector::retrieve_credentials (TAO_Stub *stub,
                   (void) ::SSL_use_certificate (ssl, nullptr);
                   return TAO::SSLIOP::OwnCredentials::_nil ();
                 }
+
+              // Send this certificate's own intermediate CA
+              // certificates.  The SSL object starts with the chain of
+              // the SSL_CTX's default certificate, which would be
+              // wrong here; with no chain of its own, send none.
+              if (::SSL_set1_chain (ssl, ssliop_credentials->chain ()) != 1)
+                {
+                  (void) ::SSL_use_certificate (ssl, nullptr);
+                  return TAO::SSLIOP::OwnCredentials::_nil ();
+                }
             }
         }
     }

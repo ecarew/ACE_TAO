@@ -11,6 +11,9 @@
 
 #include <openssl/x509.h>
 #include <openssl/pem.h>
+#include <openssl/err.h>
+
+#include <memory>
 
 // -------------------------------------------------------
 
@@ -131,7 +134,11 @@ TAO::SSLIOP::CredentialsAcquirer::get_credentials (CORBA::Boolean on_list)
   if (!(this->acquisition_arguments_ >>= data))
     throw CORBA::BAD_PARAM ();
 
-  TAO::SSLIOP::X509_var x509 = this->make_X509 (data->certificate);
+  STACK_OF (X509) *chain_ptr = nullptr;
+  TAO::SSLIOP::X509_var x509 = this->make_X509 (data->certificate, &chain_ptr);
+  std::unique_ptr<STACK_OF (X509), void (*) (STACK_OF (X509) *)> chain (
+    chain_ptr,
+    [] (STACK_OF (X509) *s) { ::sk_X509_pop_free (s, ::X509_free); });
 
   if (x509.in () == nullptr)
     throw CORBA::BAD_PARAM ();
@@ -154,7 +161,7 @@ TAO::SSLIOP::CredentialsAcquirer::get_credentials (CORBA::Boolean on_list)
 
   TAO::SSLIOP::OwnCredentials * creds = nullptr;
   ACE_NEW_THROW_EX (creds,
-                    TAO::SSLIOP::OwnCredentials (x509.in (), evp.in ()),
+                    TAO::SSLIOP::OwnCredentials (x509.in (), evp.in (), chain.get ()),
                     CORBA::NO_MEMORY ());
 
   SecurityLevel3::OwnCredentials_var credentials = creds;
@@ -199,8 +206,12 @@ TAO::SSLIOP::CredentialsAcquirer::check_validity ()
 }
 
 ::X509 *
-TAO::SSLIOP::CredentialsAcquirer::make_X509 (const ::SSLIOP::File &certificate)
+TAO::SSLIOP::CredentialsAcquirer::make_X509 (const ::SSLIOP::File &certificate,
+                                             STACK_OF (X509) **chain)
 {
+  if (chain != nullptr)
+    *chain = nullptr;
+
   // No password is used or needed when reading ASN.1 encoded
   // certificates.
 
@@ -259,6 +270,29 @@ TAO::SSLIOP::CredentialsAcquirer::make_X509 (const ::SSLIOP::File &certificate)
                          nullptr,
                          TAO_SSLIOP_PASSWORD_CALLBACK_NAME,
                          const_cast<char *> (password));
+
+      // Any further certificates in the file are the intermediate CA
+      // certificates to send with it.
+      if (x != nullptr && chain != nullptr)
+        {
+          ::X509 *ca = nullptr;
+          while ((ca = PEM_read_X509 (fp,
+                                      nullptr,
+                                      TAO_SSLIOP_PASSWORD_CALLBACK_NAME,
+                                      const_cast<char *> (password))) != nullptr)
+            {
+              if (*chain == nullptr)
+                *chain = sk_X509_new_null ();
+              if (*chain == nullptr || sk_X509_push (*chain, ca) == 0)
+                {
+                  ::X509_free (ca);
+                  break;
+                }
+            }
+          // Reading past the last certificate leaves a "no start line"
+          // error on the queue; it is the normal end of the file.
+          ERR_clear_error ();
+        }
     }
 
   (void) ACE_OS::fclose (fp);
