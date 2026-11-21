@@ -16,10 +16,12 @@ TAO_Notify_Method_Request_Queueable::copy ()
 }
 
 TAO_Notify_Method_Request_Queueable::TAO_Notify_Method_Request_Queueable()
+  : deadline_ (ACE_Time_Value::max_time)
 {
 }
 
 TAO_Notify_Method_Request_Queueable::TAO_Notify_Method_Request_Queueable(const TAO_Notify_Event * event)
+  : deadline_ (ACE_Time_Value::max_time)
 {
   this->init (event);
 }
@@ -39,27 +41,39 @@ TAO_Notify_Method_Request_Queueable::init (const TAO_Notify_Event* event)
   // CORBA::Short.
   this->msg_priority ((CORBA::Long)event->priority ().value () + PRIORITY_BASE);
 
-  // The deadline time for the message block is absolute, while the
-  // timeout for the event is relative to the time it was received.
-  // So, we do a little conversion and set it on the message block (us)
+  this->time_ = event->creation_time ();
 
+  // The deadline is absolute, while the timeout for the event is relative
+  // to the time it was received.  The message block's own deadline is kept
+  // too, for DeadlineOrder queues on platforms with timed message blocks.
   const TAO_Notify_Property_Time& timeout = event->timeout ();
 
   if (timeout.is_valid () && timeout != 0)
   {
     ACE_Time_Value deadline;
     ORBSVCS_Time::TimeT_to_Time_Value(deadline, timeout.value());
-    deadline += ACE_OS::gettimeofday ();
-    this->msg_deadline_time (deadline);
+    deadline += this->time_;
+    this->deadline (deadline);
   }
-
-  this->time_ = event->creation_time ();
 }
 
 const ACE_Time_Value&
 TAO_Notify_Method_Request_Queueable::creation_time () const
 {
   return this->time_;
+}
+
+const ACE_Time_Value&
+TAO_Notify_Method_Request_Queueable::deadline () const
+{
+  return this->deadline_;
+}
+
+void
+TAO_Notify_Method_Request_Queueable::deadline (const ACE_Time_Value& deadline)
+{
+  this->deadline_ = deadline;
+  this->msg_deadline_time (deadline);
 }
 
 TAO_END_VERSIONED_NAMESPACE_DECL

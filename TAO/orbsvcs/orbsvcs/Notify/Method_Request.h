@@ -66,8 +66,17 @@ public:
   /// The creation time of the event to which this request corresponds.
   const ACE_Time_Value& creation_time () const;
 
+  /// Absolute time after which the event must not be delivered, or
+  /// ACE_Time_Value::max_time if it does not expire.  init() sets it from
+  /// the event's own Timeout; a queue applies its Timeout QoS to events
+  /// that carry none.  Kept here because ACE_Message_Block only stores a
+  /// deadline when ACE_HAS_TIMED_MESSAGE_BLOCKS is defined.
+  const ACE_Time_Value& deadline () const;
+  void deadline (const ACE_Time_Value& deadline);
+
 private:
   ACE_Time_Value time_;
+  ACE_Time_Value deadline_;
 };
 
 TAO_END_VERSIONED_NAMESPACE_DECL

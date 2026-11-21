@@ -14,6 +14,17 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
   a full chain. Previously only the first certificate was used, and peers that
   trusted just the root CA failed the handshake.
 
+. The Notification Service now drops queued events whose Timeout has passed
+  instead of delivering them late. The deadline comes from the event's own
+  Timeout header, or else from the Timeout QoS of its proxy, admin or channel,
+  counted from when the channel received the event. Expired events also give
+  up their place before MaxEventsPerConsumer or MaxQueueLength limits apply to
+  live ones. Previously Timeout only influenced DeadlineOrder queues, and on
+  platforms without ACE_HAS_TIMED_MESSAGE_BLOCKS (all but INTEGRITY) not even
+  that. Behavior change: suppliers that put small Timeout values in event
+  headers only to sort events will now lose those events once the Timeout
+  passes; give each event a Timeout that is a real lifetime.
+
 USER VISIBLE CHANGES BETWEEN TAO-4.0.7 and TAO-4.0.8
 ====================================================
 

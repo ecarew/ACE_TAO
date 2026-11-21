@@ -160,7 +160,7 @@ SendEvent (int id)
   event.header.variable_header[1].value <<= (CORBA::Short) id;
   event.header.variable_header[2].name =
     CORBA::string_dup (CosNotification::Timeout);
-  event.header.variable_header[2].value <<= (TimeBase::TimeT) (num_events - id);
+  event.header.variable_header[2].value <<= static_cast<TimeBase::TimeT> (num_events - id) * 600000000;  // minutes: a real lifetime, same order
 
   try
   {

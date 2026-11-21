@@ -170,7 +170,7 @@ SendBatch (int batch_id)
 
     event.header.variable_header[2].name =
       CORBA::string_dup (CosNotification::Timeout);
-    event.header.variable_header[2].value <<= (TimeBase::TimeT) (id * 10000);
+    event.header.variable_header[2].value <<= static_cast<TimeBase::TimeT> (id) * 600000000;  // id minutes: a real lifetime, same order
 
     events[i] = event;
   }

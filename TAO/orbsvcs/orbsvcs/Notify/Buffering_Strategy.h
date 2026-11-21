@@ -50,7 +50,13 @@ public:
   /// Order Policy
   /// Discard Policy
   /// MaxEventsPerConsumer
+  /// BlockingPolicy
+  /// Timeout
   void update_qos_properties (const TAO_Notify_QoSProperties& qos_properties);
+
+  /// Number of queued events dropped because their deadline passed before
+  /// they could be delivered (the event's own Timeout, else the Timeout QoS).
+  size_t expired_count () const;
 
   /// Enqueue according the enqueing strategy.
   /// Return -1 on error else the number of items in the queue.
@@ -91,6 +97,17 @@ private:
   /// Discard as per the Discard Policy.
   bool discard (TAO_Notify_Method_Request_Queueable* method_request);
 
+  /// True if @a method_request has a deadline earlier than @a now.
+  static bool expired (const TAO_Notify_Method_Request_Queueable* method_request,
+                       const ACE_Time_Value& now);
+
+  /// Release an expired request taken off the queue and return its slot.
+  void drop_expired (ACE_Message_Block* mb);
+
+  /// Drop expired requests from the head of the queue.  Return the number
+  /// dropped.
+  size_t purge_expired ();
+
   ///= Data Members
 
   /// The local Message Queue
@@ -116,6 +133,13 @@ private:
 
   TAO_Notify_Property_Long max_events_per_consumer_;
   TAO_Notify_Property_Time blocking_policy_;
+
+  /// Timeout QoS: how long an event that carries no Timeout of its own may
+  /// wait in this queue.  Unset or 0 means it does not expire.
+  TAO_Notify_Property_Time timeout_;
+
+  /// Events dropped because they expired.
+  size_t expired_count_;
 
   TAO_SYNCH_CONDITION& global_not_full_;
   TAO_SYNCH_CONDITION local_not_full_;

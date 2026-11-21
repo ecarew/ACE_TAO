@@ -27,6 +27,8 @@ TAO_Notify_Buffering_Strategy::TAO_Notify_Buffering_Strategy (
 , discard_policy_ (CosNotification::DiscardPolicy, CosNotification::AnyOrder)
 , max_events_per_consumer_ (CosNotification::MaxEventsPerConsumer)
 , blocking_policy_ (TAO_Notify_Extensions::BlockingPolicy)
+, timeout_ (CosNotification::Timeout)
+, expired_count_ (0)
 , global_not_full_ (admin_properties->global_queue_not_full())
 , local_not_full_ (global_queue_lock_)
 , local_not_empty_ (global_queue_lock_)
@@ -47,6 +49,13 @@ TAO_Notify_Buffering_Strategy::update_qos_properties
   this->discard_policy_.set (qos_properties);
   this->max_events_per_consumer_.set(qos_properties);
   this->blocking_policy_.set (qos_properties);
+  this->timeout_.set (qos_properties);
+}
+
+size_t
+TAO_Notify_Buffering_Strategy::expired_count () const
+{
+  return this->expired_count_;
 }
 
 void
@@ -147,6 +156,16 @@ TAO_Notify_Buffering_Strategy::enqueue (TAO_Notify_Method_Request_Queueable* met
   if (this->shutdown_)
     return -1;
 
+  // An event that carries no Timeout of its own expires per this queue's
+  // Timeout QoS, counted from when the channel received it.
+  if (method_request->deadline () == ACE_Time_Value::max_time &&
+      this->timeout_.is_valid () && this->timeout_ != 0)
+    {
+      ACE_Time_Value timeout;
+      ORBSVCS_Time::TimeT_to_Time_Value (timeout, this->timeout_.value ());
+      method_request->deadline (method_request->creation_time () + timeout);
+    }
+
   bool discarded_existing = false;
 
   bool local_overflow = this->max_events_per_consumer_.is_valid() &&
@@ -154,6 +173,18 @@ TAO_Notify_Buffering_Strategy::enqueue (TAO_Notify_Method_Request_Queueable* met
 
   bool global_overflow = this->max_queue_length_.value () != 0 &&
     this->global_queue_length_ >= this->max_queue_length_.value ();
+
+  // Expired events give up their place before the discard policy or the
+  // RejectNewEvents limit applies to live ones.  This matters most for a
+  // consumer that has stopped reading: nothing is dequeued for it, so its
+  // queue would otherwise stay full of events nobody wants any more.
+  if ((local_overflow || global_overflow) && this->purge_expired () > 0)
+    {
+      local_overflow = this->max_events_per_consumer_.is_valid() &&
+        static_cast <CORBA::Long> (this->msg_queue_.message_count ()) >= this->max_events_per_consumer_.value();
+      global_overflow = this->max_queue_length_.value () != 0 &&
+        this->global_queue_length_ >= this->max_queue_length_.value ();
+    }
 
   while (local_overflow || global_overflow)
     {
@@ -236,26 +267,36 @@ TAO_Notify_Buffering_Strategy::dequeue (TAO_Notify_Method_Request_Queueable* &me
   if ( this->shutdown_ )
     return -1;
 
-  while (this->msg_queue_.message_count () == 0)
+  for (;;)
     {
-      this->local_not_empty_.wait (abstime);
+      while (this->msg_queue_.message_count () == 0)
+        {
+          this->local_not_empty_.wait (abstime);
 
-      if (this->shutdown_)
+          if (this->shutdown_)
+            return -1;
+
+          if (errno == ETIME)
+            return 0;
+        }
+
+      if (this->msg_queue_.dequeue (mb) == -1)
         return -1;
 
-      if (errno == ETIME)
-        return 0;
-    }
+      method_request = dynamic_cast<TAO_Notify_Method_Request_Queueable*>(mb);
 
-  if (this->msg_queue_.dequeue (mb) == -1)
-    return -1;
+      // Never deliver an event after its deadline; take the next one.
+      if (method_request == nullptr ||
+          !expired (method_request, ACE_OS::gettimeofday ()))
+        break;
+
+      this->drop_expired (mb);
+    }
 
   if (this->tracker_ != nullptr)
     {
       this->tracker_->update_queue_count (this->msg_queue_.message_count ());
     }
-
-  method_request = dynamic_cast<TAO_Notify_Method_Request_Queueable*>(mb);
 
   if (method_request == nullptr)
     return -1;
@@ -367,6 +408,58 @@ TAO_Notify_Buffering_Strategy::discard (TAO_Notify_Method_Request_Queueable* met
     }
 
   return false;
+}
+
+bool
+TAO_Notify_Buffering_Strategy::expired (
+  const TAO_Notify_Method_Request_Queueable* method_request,
+  const ACE_Time_Value& now)
+{
+  const ACE_Time_Value& deadline = method_request->deadline ();
+  return deadline != ACE_Time_Value::max_time && deadline < now;
+}
+
+void
+TAO_Notify_Buffering_Strategy::drop_expired (ACE_Message_Block* mb)
+{
+  ACE_Message_Block::release (mb);
+  ++this->expired_count_;
+  --this->global_queue_length_;
+  local_not_full_.signal ();
+  global_not_full_.signal ();
+
+  if (this->tracker_ != nullptr)
+    {
+      this->tracker_->update_queue_count (this->msg_queue_.message_count ());
+    }
+
+  if (TAO_debug_level > 0)
+    ORBSVCS_DEBUG ((LM_DEBUG,
+                    "Notify (%P|%t) - dropped expired event, %lu so far\n",
+                    static_cast<unsigned long> (this->expired_count_)));
+}
+
+size_t
+TAO_Notify_Buffering_Strategy::purge_expired ()
+{
+  size_t dropped = 0;
+  ACE_Time_Value const now = ACE_OS::gettimeofday ();
+  ACE_Message_Block* mb = nullptr;
+
+  while (this->msg_queue_.message_count () > 0 &&
+         this->msg_queue_.peek_dequeue_head (mb) != -1)
+    {
+      TAO_Notify_Method_Request_Queueable* method_request =
+        dynamic_cast<TAO_Notify_Method_Request_Queueable*> (mb);
+      if (method_request == nullptr || !expired (method_request, now) ||
+          this->msg_queue_.dequeue_head (mb) == -1)
+        break;
+
+      this->drop_expired (mb);
+      ++dropped;
+    }
+
+  return dropped;
 }
 
 
