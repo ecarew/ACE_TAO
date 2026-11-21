@@ -17,3 +17,15 @@ networked applications, [TAO](https://www.cs.wm.edu/~dcschmidt/TAO.html) is a C+
 implementation of the OMG's [CORBA](https://www.omg.org/spec/CORBA/) standard.
 
 All support on github is **best effort**, when you require a guaranteed response consider hiring one of the [commercial companies](https://github.com/DOCGroup/ACE_TAO/wiki/ACE-and-TAO-Commercial-support) who provide support and services for ACE/TAO.
+
+## Changes on this branch (ACE_TAO_Claude)
+
+- **macOS optimized builds:** `optimize=1` now applies `-O2` to C++ code; it was only reaching C.
+- **macOS install rpaths:** unquoted absolute library paths stay absolute, so apps built against an installed ACE/TAO find their libraries.
+- **macOS listen backlog:** the default is now `SOMAXCONN` instead of 5. macOS resets connections beyond the backlog rather than letting clients retry.
+- **OpenSSL 3:** fixed `ACE_SSL_SOCK_Stream` shutdown handling, and `Thread_Pool_Reactor_SSL_Test` now closes TLS sessions cleanly.
+- **SSLIOP concurrency:** fixed hangs and crashes when several threads invoke over the same TLS connection.
+- **SSLIOP certificate chains:** a PEM `-SSLCertificate` file now sends its intermediate CA certificates too, so peers need only the root CA.
+- **ORB invocation retries:** clients no longer retry the next IOR profile after unrelated system exceptions. This removes multi-minute hangs on hosts with several network interfaces (e.g. a VPN).
+- **Notification Service:** per-consumer queue limits now work when each consumer has its own delivery thread, and a consumer that leaves no longer leaks its queued events from the channel-wide count. Before, one stalled consumer could make the channel refuse all events permanently.
+- **CLAUDE.md:** build, test and architecture notes for working on the code base.
