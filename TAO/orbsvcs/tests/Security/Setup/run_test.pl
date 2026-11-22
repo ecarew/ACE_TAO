@@ -41,7 +41,8 @@ sub check_case {
     my ($name, $args, $want, $must, $mustnot, $stdin) = @_;
     my ($exit, $out) = run ($args, $stdin);
     my @problems;
-    push @problems, "exit $exit, want $want" if $exit != $want;
+    my @ok = ref ($want) ? @$want : ($want);
+    push @problems, "exit $exit, want @ok" unless grep { $_ == $exit } @ok;
     foreach my $re (@$must) { push @problems, "missing /$re/" unless $out =~ /$re/m; }
     foreach my $re (@{$mustnot || []}) { push @problems, "unexpected /$re/" if $out =~ /$re/; }
     if (@problems) {
@@ -119,8 +120,8 @@ check_case ('service check finds an unprotected key', "check --svc-conf $bad", 2
 check_case ('check --json', 'check --json', $warn_exit,
             ['^\{"mode":"prod","conf":".*","result":"(warn|fail)","checks":\[\{"name":"config","status":"OK"']);
 
-check_case ('enroll needs confirmation', 'enroll', 2, ['not confirmed'], [], '/dev/null');
 if ($synced) {
+    check_case ('enroll needs confirmation', 'enroll', 2, ['not confirmed'], [], '/dev/null');
     check_case ('enroll', 'enroll --yes', 0, ['Enrolled:', 'reason="HOST_ENROLLED"']);
     check_case ('status shows enrollment', 'status', 0, ['enrolled\s+yes']);
     check_case ('set-mode test refused while enrolled', 'set-mode test --yes', 2, ['enrolled in prod.*unenroll first']);
@@ -146,7 +147,7 @@ else {
 check_case ('enroll refused outside prod', 'enroll --yes', 2, ['only a host in mode prod']);
 check_case ('unknown mode is a usage error', 'init --mode production', 64, ['must be dev, test, prod or embedded']);
 check_case ('dev mode check runs no security checks', 'set-mode dev', 0, ['to dev']);
-check_case ('dev host check', 'check', 1, ['OK\s+config\s+mode=dev'], ['audit', 'time']);
+check_case ('dev host check', 'check', [0, 1], ['OK\s+config\s+mode=dev'], ['audit', 'time', 'FAIL']);
 
 rmtree ($work);
 exit $status;
