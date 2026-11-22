@@ -88,7 +88,11 @@ TAO_Connector::corbaloc_scan (const char *str, size_t &len)
     {
       len = std::strlen (str);
     }
-  else if (comma_pos == nullptr || comma_pos > slash_pos)
+  // The address ends at the object key's '/' if that comes before the next
+  // ','.  slash_pos must be tested first: with several addresses and no key
+  // there is a ',' but no '/', and comparing against a null slash_pos made
+  // len garbage and crashed the parser.
+  else if (slash_pos != nullptr && (comma_pos == nullptr || slash_pos < comma_pos))
     len = (slash_pos - str);
   else len = comma_pos - str;
   return this->make_profile();

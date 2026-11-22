@@ -285,9 +285,11 @@ TAO::SSLIOP::Connector::corbaloc_scan (const char *endpoint, size_t &len)
        }
        len = ACE_OS::strlen (endpoint);
    }
-   else if (comma_pos == nullptr || comma_pos > slash_pos)
+   else if (slash_pos != nullptr && (comma_pos == nullptr || slash_pos < comma_pos))
    {
-       // The endpoint address does not extend past the first '/' or ','
+       // The endpoint address does not extend past the first '/' or ','.
+       // slash_pos is tested first: with several addresses and no object
+       // key there is a ',' but no '/'.
        len = slash_pos - endpoint;
    }
    else

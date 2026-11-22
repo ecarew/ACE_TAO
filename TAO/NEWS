@@ -1,6 +1,12 @@
 USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
 ====================================================
 
+. A corbaloc or corbaname URL with several addresses and no object key (the
+  default "NameService"), such as corbaloc::host1:2809,:host2:2809, no longer
+  crashes the ORB. The address scanner compared the position of the next ','
+  with a null '/' position and computed a garbage length. Fixed for IIOP
+  (TAO_Connector) and SSLIOP; new test tests/CORBALOC_Default_Key.
+
 . TAO skeleton argument storage for basic and special-basic argument, return,
   and out values is now value-initialized, preventing indeterminate scalar
   values from reaching marshaling code.
