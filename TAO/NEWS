@@ -1,6 +1,33 @@
 USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
 ====================================================
 
+. Host security modes. A host opts in with a security configuration file,
+  ACE_TAO_SECURITY_CONF or /etc/ace-tao/security.conf ("key = value"
+  lines), whose mode = test or mode = prod applies to every TAO process.
+  Without the file nothing changes. With it, CORBA::ORB_init (new
+  tao/Security_Mode.h, in libTAO so that removing a plugin cannot remove
+  the check) refuses to run, before any port is opened, when the file has
+  no valid mode, is writable by others, or says test (or is missing) on a
+  host enrolled in prod (/var/lib/ace-tao/enrolled-prod); and in prod
+  unless the security plugin reports that its self-check passed. The
+  self-check (Security library, run when SSLIOP loads it) checks the audit
+  sink, clock synchronization (ntp_adjtime; prod waits up to
+  time_sync_wait, default 300 s, within max_clock_error, default 1000 ms),
+  turns core dumps off, and requires that only TLS protocol factories are
+  loaded (allowed_protocols, default SSLIOP_Factory). SSLIOP adds: the
+  private key must be a keystore key or a passphrase-protected file, the
+  passphrase must come from file: or prompt:, -SSLNoProtection is refused,
+  and the -SSLCAfile certificates must all be listed in
+  trust_anchor_sha256. In test mode the same findings are warnings and a
+  TEST MODE reminder is logged hourly. A banner with the mode, key type,
+  trust anchor, time and audit state and the configuration's SHA-256 goes
+  to stderr, syslog and the audit log. While a prod service runs, requests
+  are refused with CORBA::TRANSIENT while the audit sink is down, and lost
+  time synchronization raises TIME_UNSYNCED alarms without stopping the
+  service. The Notification Service refuses event persistence in prod
+  (topology persistence is unaffected). New test
+  orbsvcs/tests/Security/Mode.
+
 . The Security library has an audit logger, and SecurityLevel2's
   SecurityManager::audit_decision() returns a working AuditDecision instead
   of raising CORBA::NO_IMPLEMENT. Its AuditChannel, and the C++ class

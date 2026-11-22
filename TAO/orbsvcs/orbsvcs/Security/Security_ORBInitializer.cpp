@@ -8,6 +8,7 @@
 #include "orbsvcs/Security/SL3_SecurityCurrent.h"
 #include "orbsvcs/Security/SL3_CredentialsCurator.h"
 #include "orbsvcs/Security/SL3_SecurityManager.h"
+#include "orbsvcs/Security/Self_Check.h"
 
 #include "orbsvcs/SecurityC.h"
 
@@ -148,6 +149,12 @@ TAO::Security::ORBInitializer::post_init (
     PortableInterceptor::ORBInitInfo_ptr info)
 {
   this->register_policy_factories (info);
+
+  // On a host with a security mode, check this process and report the
+  // result to the ORB_init guard (see tao/Security_Mode.h).
+  TAO_ORBInitInfo_var tao_info = TAO_ORBInitInfo::_narrow (info);
+  if (!CORBA::is_nil (tao_info.in ()))
+    TAO::Security::Self_Check::run (tao_info->orb_core (), info);
 }
 
 void

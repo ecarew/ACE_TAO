@@ -1,6 +1,8 @@
 #include "orbsvcs/Log_Macros.h"
 #include "orbsvcs/Security/Audit_Logger.h"
 
+#include "tao/Security_Mode.h"
+
 #include "ace/ACE.h"
 #include "ace/Guard_T.h"
 #include "ace/INET_Addr.h"
@@ -22,10 +24,6 @@
 #if !defined (ACE_LACKS_UNIX_SYSLOG)
 # include <syslog.h>
 #endif /* !ACE_LACKS_UNIX_SYSLOG */
-
-#if !defined (TAO_SECURITY_CONF_DEFAULT)
-# define TAO_SECURITY_CONF_DEFAULT "/etc/ace-tao/security.conf"
-#endif /* !TAO_SECURITY_CONF_DEFAULT */
 
 TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -76,19 +74,6 @@ namespace
         out += (u < 0x20 || u == 0x7f) ? '?' : c;
       }
     return out;
-  }
-
-  std::string
-  trim (std::string const &s)
-  {
-    size_t const b = s.find_first_not_of (" \t\r\n");
-    if (b == std::string::npos)
-      return std::string ();
-    size_t const e = s.find_last_not_of (" \t\r\n");
-    std::string v = s.substr (b, e - b + 1);
-    if (v.size () >= 2 && (v.front () == '"' || v.front () == '\'') && v.back () == v.front ())
-      v = v.substr (1, v.size () - 2);
-    return v;
   }
 
   std::string
@@ -228,8 +213,7 @@ namespace TAO
         rate_window (60),
         rate_sources (4096)
     {
-      char const *const prog = ACE_OS::getprogname ();
-      this->service = (prog && *prog) ? prog : "unknown";
+      this->service = TAO_Security_Mode::program_name ();
     }
 
     Audit_Logger::Audit_Logger ()
@@ -280,50 +264,30 @@ namespace TAO
     Audit_Logger::options_from_config (char const *path)
     {
       Options opts;
-      if (path == nullptr)
-        {
-          path = ACE_OS::getenv ("ACE_TAO_SECURITY_CONF");
-          if (path == nullptr || *path == '\0')
-            path = TAO_SECURITY_CONF_DEFAULT;
-        }
+      TAO_Security_Mode::Host_Config const host =
+        path == nullptr ? TAO_Security_Mode::host () : TAO_Security_Mode::read (path);
 
-      FILE *const fp = ACE_OS::fopen (path, ACE_TEXT ("r"));
-      if (fp != nullptr)
+      if (host.mode == TAO_Security_Mode::MODE_TEST || host.mode == TAO_Security_Mode::MODE_PROD)
+        opts.mode = TAO_Security_Mode::name (host.mode);
+      std::string const sink = host.get ("audit_sink");
+      if (!sink.empty ())
+        opts.sink = sink;
+      std::string const rate = host.get ("audit_rate");
+      if (!rate.empty ())
         {
-          char line[1024];
-          while (ACE_OS::fgets (line, sizeof line, fp) != nullptr)
+          unsigned int count = 0;
+          unsigned int secs = 0;
+          if (::sscanf (rate.c_str (), "%u/%u", &count, &secs) == 2 && secs > 0)
             {
-              std::string l (line);
-              size_t const hash = l.find ('#');
-              if (hash != std::string::npos)
-                l.erase (hash);
-              size_t const eq = l.find ('=');
-              if (eq == std::string::npos)
-                continue;
-              std::string const key = trim (l.substr (0, eq));
-              std::string const value = trim (l.substr (eq + 1));
-              if (key == "mode")
-                opts.mode = value;
-              else if (key == "audit_sink")
-                opts.sink = value;
-              else if (key == "audit_rate")
-                {
-                  unsigned int count = 0;
-                  unsigned int secs = 0;
-                  if (::sscanf (value.c_str (), "%u/%u", &count, &secs) == 2 && secs > 0)
-                    {
-                      opts.rate_count = count;
-                      opts.rate_window = ACE_Time_Value (secs);
-                    }
-                  else
-                    ORBSVCS_ERROR ((LM_ERROR,
-                                    ACE_TEXT ("(%P|%t) Audit_Logger: %C: bad audit_rate ")
-                                    ACE_TEXT ("\"%C\" (want COUNT/SECONDS); using %u/%d\n"),
-                                    path, value.c_str (), opts.rate_count,
-                                    static_cast<int> (opts.rate_window.sec ())));
-                }
+              opts.rate_count = count;
+              opts.rate_window = ACE_Time_Value (secs);
             }
-          ACE_OS::fclose (fp);
+          else
+            ORBSVCS_ERROR ((LM_ERROR,
+                            ACE_TEXT ("(%P|%t) Audit_Logger: %C: bad audit_rate ")
+                            ACE_TEXT ("\"%C\" (want COUNT/SECONDS); using %u/%d\n"),
+                            host.path.c_str (), rate.c_str (), opts.rate_count,
+                            static_cast<int> (opts.rate_window.sec ())));
         }
 
       char const *const svc = ACE_OS::getenv ("ACE_TAO_AUDIT_SERVICE");

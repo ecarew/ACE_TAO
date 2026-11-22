@@ -65,6 +65,9 @@ namespace TAO
       constexpr char const AUDIT_SELF_TEST[] = "AUDIT_SELF_TEST";
       constexpr char const AUDIT_SINK_FAILED[] = "AUDIT_SINK_FAILED";
       constexpr char const AUDIT_SINK_RECOVERED[] = "AUDIT_SINK_RECOVERED";
+      constexpr char const SELF_CHECK_FAILED[] = "SELF_CHECK_FAILED";
+      constexpr char const TIME_UNSYNCED[] = "TIME_UNSYNCED";
+      constexpr char const TIME_SYNCED[] = "TIME_SYNCED";
     }
 
     /**
@@ -177,9 +180,8 @@ namespace TAO
 
       /**
        * The process-wide logger.  On first use it is configured from the
-       * host security configuration (ACE_TAO_SECURITY_CONF, default
-       * TAO_SECURITY_CONF_DEFAULT): keys mode, audit_sink and audit_rate
-       * (COUNT/SECONDS).  The svc field comes from ACE_TAO_AUDIT_SERVICE
+       * host security configuration (TAO_Security_Mode::host()): keys
+       * mode, audit_sink and audit_rate (COUNT/SECONDS).  The svc field comes from ACE_TAO_AUDIT_SERVICE
        * or the program name.
        */
       static Audit_Logger *instance ();

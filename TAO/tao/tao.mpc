@@ -268,6 +268,7 @@ project(TAO) : acelib, install, tao_output, taodefaults, pidl, extra_core, taoid
     RequestInterceptor_Adapter.cpp
     Resource_Factory.cpp
     Resume_Handle.cpp
+    Security_Mode.cpp
     Server_Strategy_Factory.cpp
     ServerRequestInterceptor_Adapter.cpp
     ServerRequestInterceptor_Adapter_Factory.cpp
@@ -582,6 +583,7 @@ project(TAO) : acelib, install, tao_output, taodefaults, pidl, extra_core, taoid
     RequestInterceptor_Adapter.h
     Resource_Factory.h
     Resume_Handle.h
+    Security_Mode.h
     Seq_Out_T.h
     Seq_Var_T.h
     Sequence_T.h

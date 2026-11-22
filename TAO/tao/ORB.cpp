@@ -22,6 +22,7 @@
 #include "tao/SystemException.h"
 #include "tao/default_environment.h"
 #include "tao/ObjectIdListC.h"
+#include "tao/Security_Mode.h"
 
 #if !defined (__ACE_INLINE__)
 # include "tao/ORB.inl"
@@ -1341,6 +1342,8 @@ CORBA::ORB_init (int &argc, ACE_TCHAR *argv[], const char *orbid)
   PortableInterceptor::SlotId slotid = 0;
   size_t pre_init_count = 0;
 
+  TAO_Security_Mode::begin (oc.get ());
+
   if (orbinitializer_registry != nullptr)
     {
       pre_init_count =
@@ -1362,6 +1365,12 @@ CORBA::ORB_init (int &argc, ACE_TCHAR *argv[], const char *orbid)
                                           command_line.get_ASCII_argv(),
                                           slotid);
     }
+
+  // In a host configured for prod, refuse to run without a security
+  // plugin whose self-check passed.  This is in libTAO, not the plugin,
+  // so that removing the plugin cannot remove the check, and it runs
+  // before the ORB opens any listening port.
+  TAO_Security_Mode::enforce (oc.get ());
 
   if (TAO_debug_level > 2)
     {

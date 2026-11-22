@@ -1,0 +1,19 @@
+// -*- MPC -*-
+project(*idl) : taoidldefaults {
+  IDL_Files {
+    Test.idl
+  }
+  custom_only = 1
+}
+
+project(*Test) : taoserver, orbsvcslib, security, ssliop, pi_server, interceptors {
+  after += *idl
+  exename = mode_test
+  Source_Files {
+    TestS.cpp
+    TestC.cpp
+    mode_test.cpp
+  }
+  IDL_Files {
+  }
+}

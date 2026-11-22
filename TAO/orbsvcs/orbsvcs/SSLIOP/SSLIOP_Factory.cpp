@@ -3,6 +3,8 @@
 #include "orbsvcs/SSLIOP/SSLIOP_Acceptor.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Connector.h"
 #include "orbsvcs/SSLIOP/SSLIOP_ORBInitializer.h"
+#include "orbsvcs/Security/Self_Check.h"
+#include "tao/Security_Mode.h"
 #include "ace/OS_NS_strings.h"
 #include "ace/Read_Buffer.h"
 #include "ace/Malloc_Base.h"
@@ -23,6 +25,12 @@
 
 #include "ace/SSL/sslconf.h"
 #include "ace/SSL/SSL_Context.h"
+
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+
+#include <string>
 
 // An SSL session id seed value. Needs not be too unique, just somewhat
 // different. See the OpenSSL manual
@@ -104,6 +112,182 @@ namespace
       }
 #endif /* !ACE_WIN32 */
     return len;
+  }
+}
+
+
+namespace
+{
+  using TAO::Security::Self_Check;
+
+  std::string
+  normalize_fingerprint (std::string const &in)
+  {
+    std::string out;
+    for (char const c : in)
+      if (c != ':' && c != ' ')
+        out += static_cast<char> (ACE_OS::ace_tolower (c));
+    if (out.compare (0, 7, "sha256:") == 0)
+      out.erase (0, 7);
+    return out;
+  }
+
+  /// Contributes SSLIOP's facts to the security self-check on a host
+  /// with a security mode: how the private key is protected, where its
+  /// passphrase comes from, and whether the trusted CAs are exactly the
+  /// configured trust anchors.  In prod a weak setting is a failure.
+  void
+  report_mode_checks (char const *private_key_path, int private_key_type,
+                      std::string const &password_source,
+                      char const *ca_file, char const *ca_dir, bool no_protection)
+  {
+    TAO_Security_Mode::Host_Config const &host = TAO_Security_Mode::host ();
+    if (host.mode != TAO_Security_Mode::MODE_TEST && host.mode != TAO_Security_Mode::MODE_PROD)
+      return;
+    Self_Check::Status const bad =
+      host.mode == TAO_Security_Mode::MODE_PROD ? Self_Check::CHECK_FAIL : Self_Check::CHECK_WARN;
+
+    // Private key.
+    if (private_key_path == nullptr)
+      {
+        Self_Check::banner_field ("key", "none");
+        Self_Check::contribute ("ssliop_key", bad, "no -SSLPrivateKey: mutual TLS needs a key");
+      }
+    else if (private_key_type == ACE_SSL_Context::FILETYPE_STORE)
+      {
+        Self_Check::banner_field ("key", "store");
+        Self_Check::contribute ("ssliop_key", Self_Check::CHECK_OK,
+                                (std::string ("keystore key ") + private_key_path).c_str ());
+      }
+    else
+      {
+        bool encrypted = false;
+        FILE *const fp = ACE_OS::fopen (private_key_path, ACE_TEXT ("rb"));
+        if (fp != nullptr)
+          {
+            std::string data;
+            char buf[4096];
+            size_t n;
+            while (data.size () < 65536 && (n = ACE_OS::fread (buf, 1, sizeof buf, fp)) > 0)
+              data.append (buf, n);
+            ACE_OS::fclose (fp);
+            if (private_key_type == SSL_FILETYPE_PEM)
+              encrypted = data.find ("ENCRYPTED PRIVATE KEY") != std::string::npos
+                || data.find ("Proc-Type: 4,ENCRYPTED") != std::string::npos;
+            else
+              {
+                // DER: an unencrypted key parses without a passphrase.
+                unsigned char const *p = reinterpret_cast<unsigned char const *> (data.data ());
+                EVP_PKEY *const k = ::d2i_AutoPrivateKey (nullptr, &p, static_cast<long> (data.size ()));
+                encrypted = k == nullptr;
+                ::EVP_PKEY_free (k);
+              }
+          }
+        Self_Check::banner_field ("key", encrypted ? "encrypted-file" : "unprotected-file");
+        if (encrypted)
+          Self_Check::contribute ("ssliop_key", Self_Check::CHECK_OK,
+                                  (std::string ("passphrase-protected key file ") + private_key_path).c_str ());
+        else
+          Self_Check::contribute ("ssliop_key", bad,
+                                  (std::string ("unprotected private key file ") + private_key_path
+                                   + " (use a keystore key, STORE:<uri>, or a passphrase-protected file)").c_str ());
+      }
+
+    // Passphrase source: env: and literal values sit in the environment
+    // or the process listing.
+    if (!password_source.empty ())
+      {
+        bool const weak = password_source.compare (0, 5, "file:") != 0
+          && password_source.compare (0, 7, "prompt:") != 0;
+        std::string const kind = password_source.compare (0, 4, "env:") == 0 ? "env:"
+          : weak ? "a literal value" : password_source.substr (0, password_source.find (':') + 1);
+        Self_Check::contribute ("ssliop_password", weak ? bad : Self_Check::CHECK_OK,
+                                weak ? ("-SSLPassword from " + kind + " is visible to other processes"
+                                        " (use file: or prompt:)").c_str ()
+                                     : ("-SSLPassword from " + kind).c_str ());
+      }
+
+    if (no_protection)
+      Self_Check::contribute ("ssliop_protection", bad,
+                              "-SSLNoProtection accepts unprotected invocations");
+
+    // Trust anchors: the CA file must hold exactly the configured roots,
+    // so a lab or test CA cannot slip into a production trust store.
+    std::string anchors;
+    {
+      std::string const list = host.get ("trust_anchor_sha256");
+      size_t start = 0;
+      while (start <= list.size ())
+        {
+          size_t const comma = list.find (',', start);
+          std::string const one = normalize_fingerprint (
+            list.substr (start, comma == std::string::npos ? std::string::npos : comma - start));
+          if (!one.empty ())
+            anchors += " " + one + " ";
+          if (comma == std::string::npos)
+            break;
+          start = comma + 1;
+        }
+    }
+    if (ca_dir != nullptr)
+      Self_Check::contribute ("ssliop_trust", bad,
+                              "-SSLCAdir cannot be checked against trust_anchor_sha256; use -SSLCAfile");
+    if (ca_file == nullptr)
+      {
+        if (ca_dir == nullptr)
+          Self_Check::contribute ("ssliop_trust", bad, "no -SSLCAfile: peers cannot be verified");
+        return;
+      }
+    if (anchors.empty ())
+      {
+        Self_Check::contribute ("ssliop_trust", bad,
+                                "trust_anchor_sha256 is not set in the security configuration");
+        return;
+      }
+
+    FILE *const fp = ACE_OS::fopen (ca_file, ACE_TEXT ("r"));
+    if (fp == nullptr)
+      {
+        Self_Check::contribute ("ssliop_trust", bad, (std::string ("cannot read -SSLCAfile ") + ca_file).c_str ());
+        return;
+      }
+    int count = 0;
+    std::string unknown, first;
+    X509 *cert = nullptr;
+    while ((cert = ::PEM_read_X509 (fp, nullptr, nullptr, nullptr)) != nullptr)
+      {
+        unsigned char md[EVP_MAX_MD_SIZE];
+        unsigned int len = 0;
+        ::X509_digest (cert, ::EVP_sha256 (), md, &len);
+        ::X509_free (cert);
+        std::string hex;
+        char two[3];
+        for (unsigned int i = 0; i < len; ++i)
+          {
+            ACE_OS::snprintf (two, sizeof two, "%02x", md[i]);
+            hex += two;
+          }
+        ++count;
+        if (first.empty ())
+          first = hex;
+        if (anchors.find (" " + hex + " ") == std::string::npos)
+          (unknown.empty () ? unknown : unknown += ",") += "sha256:" + hex.substr (0, 16);
+      }
+    ACE_OS::fclose (fp);
+    ::ERR_clear_error ();   // PEM_read_X509 leaves "no start line" at end of file
+
+    if (count == 0)
+      Self_Check::contribute ("ssliop_trust", bad, (std::string ("no certificates in -SSLCAfile ") + ca_file).c_str ());
+    else if (!unknown.empty ())
+      Self_Check::contribute ("ssliop_trust", bad,
+                              (std::string ("-SSLCAfile ") + ca_file + " holds certificates that are not trust anchors: "
+                               + unknown).c_str ());
+    else
+      {
+        Self_Check::banner_field ("ca", ("sha256:" + first.substr (0, 12)).c_str ());
+        Self_Check::contribute ("ssliop_trust", Self_Check::CHECK_OK,
+                                (std::to_string (count) + " trust anchor(s) in " + ca_file).c_str ());
+      }
   }
 }
 
@@ -329,6 +513,8 @@ TAO::SSLIOP::Protocol_Factory::init (int argc, ACE_TCHAR* argv[])
   int dhparams_type = -1;
 
   int prevdebug = -1;
+  std::string password_source;
+  bool no_protection = false;
 
   // Force the Singleton instance to be initialized/instantiated.
   // Some SSLIOP option combinations below will result in the
@@ -401,6 +587,7 @@ TAO::SSLIOP::Protocol_Factory::init (int argc, ACE_TCHAR* argv[])
           // overridden by a SecurityLevel2::QOPPolicy in the object
           // reference.
           this->qop_ = ::Security::SecQOPNoProtection;
+          no_protection = true;
         }
 
       else if (ACE_OS::strcasecmp (argv[curarg],
@@ -555,6 +742,7 @@ TAO::SSLIOP::Protocol_Factory::init (int argc, ACE_TCHAR* argv[])
           if (curarg < argc)
             {
               pem_passwd_ = ACE_TEXT_ALWAYS_CHAR(argv[curarg]);
+              password_source = pem_passwd_.c_str ();
             }
         }
       else if (ACE_OS::strcasecmp (argv[curarg],
@@ -817,6 +1005,9 @@ TAO::SSLIOP::Protocol_Factory::init (int argc, ACE_TCHAR* argv[])
         }
 #endif
     }
+
+  report_mode_checks (private_key_path.in (), private_key_type, password_source,
+                      ca_file.in (), ca_dir.in (), no_protection);
 
   if (this->register_orb_initializer () != 0)
     return -1;

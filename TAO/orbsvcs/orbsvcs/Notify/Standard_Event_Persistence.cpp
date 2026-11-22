@@ -2,6 +2,7 @@
 #include "orbsvcs/Notify/Standard_Event_Persistence.h"
 #include "orbsvcs/Notify/Persistent_File_Allocator.h"
 #include "tao/debug.h"
+#include "tao/Security_Mode.h"
 #include "ace/Dynamic_Service.h"
 #include "ace/OS_NS_strings.h"
 #include "ace/Truncate.h"
@@ -54,6 +55,23 @@ Standard_Event_Persistence::reset ()
 int
 Standard_Event_Persistence::init (int argc, ACE_TCHAR *argv[])
 {
+  // Persisted events are message payloads at rest, which on a host
+  // handling card or patient data must not be written to disk in clear.
+  // Topology persistence (channels, admins, proxies, filters) is allowed.
+  if (TAO_Security_Mode::host ().mode == TAO_Security_Mode::MODE_PROD)
+  {
+    TAO_Security_Mode::announce (3 /* LOG_ERR */,
+      "ACE/TAO security: Notification Service event persistence is refused in prod mode "
+      "(event payloads would be stored on disk); remove Event_Persistence from the "
+      "service configuration");
+    // ORB_init tolerates a failed service object, so also make the
+    // ORB_init guard refuse to run.
+    TAO_Security_Mode::prod_violation (
+      "Notification Service event persistence is configured (refused in prod)");
+    errno = EACCES;
+    return -1;
+  }
+
   int result = 0;
   bool verbose = false;
   for (int narg = 0; narg < argc; ++narg)
