@@ -352,7 +352,9 @@ TAO::SSLIOP::Protocol_Factory::pem_passwd_cb (char *buf, int size, int , void *t
             }
           else
             {
-              ACE_Read_Buffer reader (file, true);
+              // The file is closed below; a reader that also closed it
+              // on destruction would close it twice (glibc aborts).
+              ACE_Read_Buffer reader (file, false);
               char* string = reader.read ();
               if (string != nullptr)
                 {
