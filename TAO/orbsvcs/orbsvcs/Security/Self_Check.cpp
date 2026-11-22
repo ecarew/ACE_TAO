@@ -376,8 +376,11 @@ namespace TAO
     Self_Check::run (TAO_ORB_Core *orb_core, PortableInterceptor::ORBInitInfo_ptr info)
     {
       TAO_Security_Mode::Host_Config const &host = TAO_Security_Mode::host ();
+      // Only test and prod run the self-check.  dev and embedded are
+      // announced by the ORB_init guard; no mode is stock behaviour; an
+      // invalid configuration is refused by the guard.
       if (host.mode != TAO_Security_Mode::MODE_TEST && host.mode != TAO_Security_Mode::MODE_PROD)
-        return true;   // No mode: stock behaviour.  Invalid: the ORB_init guard refuses.
+        return true;
 
       bool const prod = host.mode == TAO_Security_Mode::MODE_PROD;
       Status const bad = prod ? CHECK_FAIL : CHECK_WARN;

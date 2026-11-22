@@ -5,7 +5,8 @@
  * @file Self_Check.h
  *
  * The security plugin's startup self-check and its running monitor, for
- * hosts configured with a security mode (see tao/Security_Mode.h).
+ * hosts in mode test or prod (see tao/Security_Mode.h); dev and embedded
+ * run no checks.
  *
  * At ORB initialization the self-check verifies, for this process:
  *   - the security configuration is not writable by others;

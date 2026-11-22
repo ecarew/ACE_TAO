@@ -8,18 +8,27 @@
  *
  * A host opts in to these checks with a security configuration file,
  * ACE_TAO_SECURITY_CONF or TAO_SECURITY_CONF_DEFAULT
- * (/etc/ace-tao/security.conf), holding @c mode = @c test or @c prod
- * among other "key = value" lines.  Without the file (and without the
- * prod enrollment marker) TAO behaves as it always has.
+ * (/etc/ace-tao/security.conf), holding @c mode among other
+ * "key = value" lines.  Without the file (and without the prod
+ * enrollment marker) TAO behaves as it always has.  The modes:
+ *   - @c dev: developer machines and labs, synthetic data only.  The
+ *     security plugin is optional and no self-check runs.
+ *   - @c test: QA or staging that mirrors prod (test CA, no live data).
+ *     The full self-check runs and its findings are warnings.
+ *   - @c prod: live data.  Everything is enforced.
+ *   - @c embedded: a constrained device that cannot run the security
+ *     plugin, declared as such.  Runs without it, with a loud banner.
+ * Every mode but prod is refused on a host enrolled in prod.
  *
  * At the end of CORBA::ORB_init():
  *   - no file, host not enrolled: nothing happens (mode "none");
  *   - file without a valid mode, unreadable, or writable by others: the
  *     ORB refuses to initialize;
  *   - host enrolled in prod (TAO_SECURITY_ENROLLED_MARKER exists) but the
- *     file is missing or says test: refused, so a production host cannot
- *     be downgraded by deleting or editing one file;
- *   - mode test: allowed;
+ *     file is missing or names another mode: refused, so a production
+ *     host cannot be downgraded by deleting or editing one file;
+ *   - modes dev, test and embedded: allowed (dev and embedded announce
+ *     themselves once per process, since they may run without a plugin);
  *   - mode prod: allowed only if a security plugin reported, for this
  *     ORB, that its self-check passed (report_plugin()), and no library
  *     recorded a prod_violation().
@@ -68,7 +77,9 @@ public:
     MODE_TEST,
     MODE_PROD,
     /// The configuration cannot be used; ORB_init refuses to run.
-    MODE_INVALID
+    MODE_INVALID,
+    MODE_DEV,
+    MODE_EMBEDDED
   };
 
   struct Host_Config

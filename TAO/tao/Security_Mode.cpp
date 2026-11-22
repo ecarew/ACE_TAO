@@ -158,21 +158,26 @@ TAO_Security_Mode::read (char const *conf_path, char const *marker_path)
   if (mode == "prod")
     cfg.mode = MODE_PROD;
   else if (mode == "test")
-    {
-      cfg.mode = MODE_TEST;
-      if (cfg.enrolled)
-        {
-          cfg.mode = MODE_INVALID;
-          cfg.error = std::string ("host is enrolled in prod (") + marker_path
-            + ") but the security configuration says mode = test";
-        }
-    }
+    cfg.mode = MODE_TEST;
+  else if (mode == "dev")
+    cfg.mode = MODE_DEV;
+  else if (mode == "embedded")
+    cfg.mode = MODE_EMBEDDED;
   else
     {
       cfg.mode = MODE_INVALID;
       cfg.error = mode.empty ()
-        ? std::string ("the security configuration has no mode (want mode = test or mode = prod)")
-        : "unknown mode \"" + mode + "\" (want test or prod)";
+        ? std::string ("the security configuration has no mode "
+                       "(want mode = dev, test, prod or embedded)")
+        : "unknown mode \"" + mode + "\" (want dev, test, prod or embedded)";
+      return cfg;
+    }
+
+  if (cfg.enrolled && cfg.mode != MODE_PROD)
+    {
+      cfg.error = std::string ("host is enrolled in prod (") + marker_path
+        + ") but the security configuration says mode = " + mode;
+      cfg.mode = MODE_INVALID;
     }
   return cfg;
 }
@@ -189,8 +194,10 @@ TAO_Security_Mode::name (Mode mode)
 {
   switch (mode)
     {
+    case MODE_DEV: return "dev";
     case MODE_TEST: return "test";
     case MODE_PROD: return "prod";
+    case MODE_EMBEDDED: return "embedded";
     case MODE_INVALID: return "invalid";
     case MODE_NONE:
     default: return "none";
@@ -253,6 +260,27 @@ TAO_Security_Mode::enforce (TAO_ORB_Core *orb_core)
     {
     case MODE_NONE:
     case MODE_TEST:
+      return;
+    case MODE_DEV:
+    case MODE_EMBEDDED:
+      {
+        // These may run without the security plugin, so say so here,
+        // once per process, rather than rely on the plugin's banner.
+        static bool announced = false;
+        ACE_GUARD (ACE_Thread_Mutex, guard, reports_lock ());
+        if (!announced)
+          {
+            announced = true;
+            std::string const msg = host.mode == MODE_DEV
+              ? "ACE/TAO security: MODE=DEV (" + host.path + "): development use only, "
+                "synthetic data only; security checks are not run"
+              : "ACE/TAO security: MODE=EMBEDDED (" + host.path + "): declared constrained "
+                "device, running without the security plugin; not permitted on a prod host";
+            TAO_Security_Mode::announce (host.mode == MODE_DEV ? 5 /* LOG_NOTICE */
+                                                               : 4 /* LOG_WARNING */,
+                                         msg.c_str ());
+          }
+      }
       return;
     case MODE_INVALID:
       refuse (host, host.error);

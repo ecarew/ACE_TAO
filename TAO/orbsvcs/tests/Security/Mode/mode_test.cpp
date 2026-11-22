@@ -76,6 +76,26 @@ namespace
     check (c.mode == TAO_Security_Mode::MODE_INVALID && c.error.find ("mode = test") != std::string::npos,
            "enrolled host with mode = test: refused (no downgrade)");
 
+    write_file (conf, "mode = dev\n");
+    c = TAO_Security_Mode::read (conf.c_str (), marker.c_str ());
+    check (c.mode == TAO_Security_Mode::MODE_INVALID && c.error.find ("mode = dev") != std::string::npos,
+           "enrolled host with mode = dev: refused");
+
+    write_file (conf, "mode = embedded\n");
+    c = TAO_Security_Mode::read (conf.c_str (), marker.c_str ());
+    check (c.mode == TAO_Security_Mode::MODE_INVALID && c.error.find ("mode = embedded") != std::string::npos,
+           "enrolled host with mode = embedded: refused");
+
+    c = TAO_Security_Mode::read (conf.c_str (), missing.c_str ());
+    check (c.mode == TAO_Security_Mode::MODE_EMBEDDED
+           && ACE_OS::strcmp (TAO_Security_Mode::name (c.mode), "embedded") == 0,
+           "embedded without enrollment: embedded");
+
+    write_file (conf, "mode = dev\n");
+    c = TAO_Security_Mode::read (conf.c_str (), missing.c_str ());
+    check (c.mode == TAO_Security_Mode::MODE_DEV && ACE_OS::strcmp (TAO_Security_Mode::name (c.mode), "dev") == 0,
+           "dev without enrollment: dev");
+
     write_file (conf, "# prod host\nmode = prod   # trailing comment\naudit_rate = \"5/30\"\n");
     c = TAO_Security_Mode::read (conf.c_str (), marker.c_str ());
     check (c.mode == TAO_Security_Mode::MODE_PROD && c.get ("audit_rate") == "5/30",

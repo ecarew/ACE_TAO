@@ -267,7 +267,7 @@ namespace TAO
       TAO_Security_Mode::Host_Config const host =
         path == nullptr ? TAO_Security_Mode::host () : TAO_Security_Mode::read (path);
 
-      if (host.mode == TAO_Security_Mode::MODE_TEST || host.mode == TAO_Security_Mode::MODE_PROD)
+      if (host.mode != TAO_Security_Mode::MODE_NONE && host.mode != TAO_Security_Mode::MODE_INVALID)
         opts.mode = TAO_Security_Mode::name (host.mode);
       std::string const sink = host.get ("audit_sink");
       if (!sink.empty ())

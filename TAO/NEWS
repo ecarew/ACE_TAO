@@ -3,12 +3,16 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
 
 . Host security modes. A host opts in with a security configuration file,
   ACE_TAO_SECURITY_CONF or /etc/ace-tao/security.conf ("key = value"
-  lines), whose mode = test or mode = prod applies to every TAO process.
-  Without the file nothing changes. With it, CORBA::ORB_init (new
+  lines), whose mode applies to every TAO process: dev (developer machines,
+  synthetic data; no self-check, plugin optional), test (QA or staging
+  mirroring prod; the self-check runs and warns), prod (live data;
+  enforced) or embedded (a declared constrained device that cannot run the
+  security plugin; runs without it, with a loud banner). dev and embedded
+  announce themselves once per process. Without the file nothing changes. With it, CORBA::ORB_init (new
   tao/Security_Mode.h, in libTAO so that removing a plugin cannot remove
   the check) refuses to run, before any port is opened, when the file has
-  no valid mode, is writable by others, or says test (or is missing) on a
-  host enrolled in prod (/var/lib/ace-tao/enrolled-prod); and in prod
+  no valid mode, is writable by others, or names any mode but prod (or is
+  missing) on a host enrolled in prod (/var/lib/ace-tao/enrolled-prod); and in prod
   unless the security plugin reports that its self-check passed. The
   self-check (Security library, run when SSLIOP loads it) checks the audit
   sink, clock synchronization (ntp_adjtime; prod waits up to
