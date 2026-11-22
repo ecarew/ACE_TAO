@@ -752,7 +752,16 @@ namespace TAO
           {
             ssize_t sent = 0;
             if (this->kind_ == SINK_UNIX)
-              sent = ACE_OS::send (this->handle_, line.data (), line.size ());
+              {
+                // A full local socket blocks on Linux (up to SO_SNDTIMEO)
+                // but fails at once with ENOBUFS on macOS and the BSDs;
+                // give a slow reader the same grace there.
+                ACE_Time_Value const deadline = ACE_OS::gettimeofday () + SEND_TIMEOUT;
+                while ((sent = ACE_OS::send (this->handle_, line.data (), line.size ())) < 0
+                       && (errno == ENOBUFS || errno == EAGAIN || errno == EWOULDBLOCK)
+                       && ACE_OS::gettimeofday () < deadline)
+                  ACE_OS::sleep (ACE_Time_Value (0, 1000));
+              }
             else
               {
                 ACE_SOCK_Stream stream (this->handle_);
