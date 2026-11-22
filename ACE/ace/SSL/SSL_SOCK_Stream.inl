@@ -356,8 +356,14 @@ ACE_SSL_SOCK_Stream::close ()
 
     case SSL_ERROR_WANT_READ:
     case SSL_ERROR_WANT_WRITE:
-      errno = EWOULDBLOCK;
-      break;
+      // A non-blocking stream whose peer is not reading cannot send its
+      // "close_notify" now.  Closing must not depend on the peer: give up
+      // on the "close_notify" and close the socket anyway.  Returning
+      // EWOULDBLOCK with the socket still open leaked the handle, since
+      // callers treat close() as final (BZ-1180).
+      ::SSL_clear (this->ssl_);
+      this->set_handle (ACE_INVALID_HANDLE);
+      return this->stream_.close ();
 
     case SSL_ERROR_SSL:
     case SSL_ERROR_SYSCALL:

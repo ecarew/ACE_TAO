@@ -1,6 +1,11 @@
 USER VISIBLE CHANGES BETWEEN ACE-8.0.8 and ACE-8.0.9
 ====================================================
 
+. ACE_SSL_SOCK_Stream::close() now always closes the socket. On a
+  non-blocking stream whose peer had stopped reading, SSL_shutdown() could
+  not send its close_notify, and close() returned -1 with EWOULDBLOCK while
+  leaving the socket open, leaking the handle (bugzilla 1180).
+
 USER VISIBLE CHANGES BETWEEN ACE-8.0.7 and ACE-8.0.8
 ====================================================
 
