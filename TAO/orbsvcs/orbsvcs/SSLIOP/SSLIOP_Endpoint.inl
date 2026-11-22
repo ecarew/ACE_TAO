@@ -61,7 +61,7 @@ TAO_SSLIOP_Endpoint::credentials () const
 ACE_INLINE int
 TAO_SSLIOP_Endpoint::credentials_set () const
 {
-  return this->credentials_set_;
+  return this->credentials_set_.load (std::memory_order_acquire) ? 1 : 0;
 }
 
 TAO_END_VERSIONED_NAMESPACE_DECL

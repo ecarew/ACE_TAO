@@ -26,7 +26,7 @@ TAO_SSLIOP_Endpoint::TAO_SSLIOP_Endpoint (const ::SSLIOP::SSL *ssl_component,
     trust_ (),
 #endif /* !VXWORKS && !__QNX__ */
     credentials_ (),
-    credentials_set_ (0)
+    credentials_set_ (false)
 {
   if (ssl_component != nullptr)
     {
@@ -181,7 +181,7 @@ TAO_SSLIOP_Endpoint::duplicate ()
                                          0),
                   0);
 
-  if (this->credentials_set_)
+  if (this->credentials_set_.load (std::memory_order_acquire))
     endpoint->set_sec_attrs (this->qop_,this->trust_, this->credentials_.in());
 
   endpoint->iiop_endpoint (this->iiop_endpoint_, true);
@@ -271,7 +271,7 @@ TAO_SSLIOP_Endpoint::set_sec_attrs (::Security::QOP q,
                                     const ::Security::EstablishTrust &t,
                                     const TAO::SSLIOP::OwnCredentials_ptr c)
 {
-  if (this->credentials_set_)
+  if (this->credentials_set_.load (std::memory_order_acquire))
     return;
 
   ACE_GUARD (TAO_SYNCH_MUTEX,
@@ -279,16 +279,18 @@ TAO_SSLIOP_Endpoint::set_sec_attrs (::Security::QOP q,
              this->addr_lookup_lock_);
 
   // double-check
-  if (this->credentials_set_)
+  if (this->credentials_set_.load (std::memory_order_relaxed))
     return;
 
   this->qop_ = q;
   this->trust_ = t;
   this->credentials_ = TAO::SSLIOP::OwnCredentials::_duplicate (c);
-  this->credentials_set_ = 1;
 
   // reset the hash value to force a recomputation.
   this->hash_val_ = 0;
+
+  // Publish last: a thread that sees the flag set also sees the values.
+  this->credentials_set_.store (true, std::memory_order_release);
 }
 
 

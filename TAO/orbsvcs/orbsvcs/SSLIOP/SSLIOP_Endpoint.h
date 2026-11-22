@@ -30,6 +30,8 @@
 #include "tao/IIOP_Endpoint.h"
 #include "ace/INET_Addr.h"
 
+#include <atomic>
+
 TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 
 namespace TAO
@@ -188,8 +190,12 @@ namespace TAO
       /// SSLIOP-specific credentials for this endpoint object.
       TAO::SSLIOP::OwnCredentials_var credentials_;
 
-      /// A flag indicating that credentials_ was explicitly initialized
-      int credentials_set_;
+      /// A flag indicating that credentials_ was explicitly initialized.
+      /// Read without the lock (double-checked in set_sec_attrs()), so it
+      /// is atomic: the release store after credentials_ is written and
+      /// the acquire loads make credentials_ visible to any thread that
+      /// sees the flag set, also on weakly ordered CPUs such as arm64.
+      std::atomic<bool> credentials_set_;
     };
 
     /**
