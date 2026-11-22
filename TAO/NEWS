@@ -1,6 +1,19 @@
 USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
 ====================================================
 
+. New tool ace-tao-setup (orbsvcs/Security_Setup) prepares and checks a
+  host's security configuration: status; check [--svc-conf FILE] [--json]
+  (host checks, plus a service's own startup self-check run in-process
+  without opening a port; exit 0 OK, 1 warnings, 2 failures, for systemd
+  ExecStartPre, timers and monitoring); init --mode MODE
+  [--trust-anchor-file PEM] (writes security.conf atomically, showing the
+  CA fingerprints for confirmation); set-mode; enroll (writes the prod
+  enrollment marker after the host checks pass); unenroll --reason TEXT.
+  Every change is written to the audit log; leaving prod needs
+  confirmation, and every mode but prod is refused on an enrolled host.
+  The audit logger now drops caller fields named like its own (mode, svc,
+  event, result, reason). New test orbsvcs/tests/Security/Setup.
+
 . SSLIOP no longer closes a -SSLPassword file: passphrase file twice. The
   ACE_Read_Buffer reading it closed the file on destruction after the code
   had already closed it; glibc aborts on that (double free), so on Linux a

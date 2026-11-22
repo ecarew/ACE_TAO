@@ -68,6 +68,9 @@ namespace TAO
       constexpr char const SELF_CHECK_FAILED[] = "SELF_CHECK_FAILED";
       constexpr char const TIME_UNSYNCED[] = "TIME_UNSYNCED";
       constexpr char const TIME_SYNCED[] = "TIME_SYNCED";
+      constexpr char const MODE_SET[] = "MODE_SET";
+      constexpr char const HOST_ENROLLED[] = "HOST_ENROLLED";
+      constexpr char const HOST_UNENROLLED[] = "HOST_UNENROLLED";
     }
 
     /**

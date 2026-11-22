@@ -62,6 +62,14 @@ namespace
     return true;
   }
 
+  // Fields every record sets itself; a caller field with one of these
+  // names would let a peer-supplied value pose as the real one.
+  bool
+  reserved_name (std::string const &name)
+  {
+    return name == "mode" || name == "svc" || name == "event" || name == "result" || name == "reason";
+  }
+
   std::string
   sanitize_text (std::string const &text, size_t max)
   {
@@ -628,7 +636,7 @@ namespace TAO
         {
           if (n++ >= MAX_FIELDS)
             break;
-          if (valid_name (f.first))
+          if (valid_name (f.first) && !reserved_name (f.first))
             add (f.first.c_str (), f.second);
         }
       sd += ']';

@@ -184,12 +184,14 @@ namespace
     check (deny.find ('\n') == std::string::npos, "record is one line", deny);
 
     logger.write (Audit_Record ("authn", true, nullptr).field ("peer", "spiffe://x/svc").field ("", "skipped")
-                    .field ("bad name", "skipped").field ("empty", "").text ("line one\nline two"));
+                    .field ("bad name", "skipped").field ("empty", "")
+                    .field ("reason", "forged").field ("mode", "forged").text ("line one\nline two"));
     std::string const ok = rx.recv ();
     check (ok.compare (0, 4, "<86>") == 0, "success is authpriv.info <86>", ok);
     check (contains (ok, "event=\"authn\" result=\"ok\" reason=\"OK\" peer=\"spiffe://x/svc\"] line one?line two"),
            "success record, free text sanitized", ok);
     check (!contains (ok, "skipped") && !contains (ok, "empty="), "invalid names and empty values dropped", ok);
+    check (!contains (ok, "forged"), "fields named like the built-in ones (reason, mode) dropped", ok);
   }
 
   void
