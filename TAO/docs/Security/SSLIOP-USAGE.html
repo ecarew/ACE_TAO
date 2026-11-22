@@ -127,7 +127,14 @@ function MM_nbGroup(event, grpName) { //v3.0
         The private key and certificate files must match. It is extremely important
         that you secure your private key! By default the <code>OpenSSL</code>
         utilities will generate pass phrase protected private key files. The password
-        is prompted when you run the CORBA application. </td>
+        is prompted when you run the CORBA application.
+        With OpenSSL 3 the key can instead stay in a keystore (HSM, smart card,
+        TPM) and be named by an OpenSSL store URI: <code>STORE:</code><em>uri</em>,
+        e.g. <code>STORE:pkcs11:token=lab;object=server;type=private</code>, or a
+        PKCS#11 URI on its own (<code>pkcs11:...</code>). The provider for the URI
+        must be loaded through the OpenSSL configuration (<code>OPENSSL_CONF</code>).
+        A PIN is supplied through <code>-SSLPassword</code>; without it no prompt is
+        attempted. </td>
     </tr>
     <tr>
       <td><code>-SSLAuthenticate</code> <em>which</em></td>
@@ -184,7 +191,7 @@ function MM_nbGroup(event, grpName) { //v3.0
     </tr>
     <tr>
       <td><code>-SSLPassword</code> <em>specifier</em></td>
-      <td>if the supplied <code>-SSLPrivateKey</code> is password protected, this option enables overriding the default password entry. The supplied specifier can be <code>prompt:</code><em>message</em> to prompt a user for entry, <code>file:</code><em>filename</em> reads a plain text file, <code>env:</code><em>envvarname</em>, or simply <em>thepassword</em>. Clearly using any option apart from prompt: weakens the protection. </td>
+      <td>if the supplied <code>-SSLPrivateKey</code> is password protected, or is a keystore key that needs a PIN, this option enables overriding the default password entry. The supplied specifier can be <code>prompt:</code><em>message</em> to prompt a user for entry, <code>file:</code><em>filename</em> reads a plain text file, <code>env:</code><em>envvarname</em>, or simply <em>thepassword</em>. Clearly using any option apart from prompt: weakens the protection. </td>
     </tr>
     <tr>
       <td><code>-SSLCheckHost</code></td>

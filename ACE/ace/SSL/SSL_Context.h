@@ -110,6 +110,14 @@ public:
     SSLv23
   };
 
+  /// File type for private_key(): the name is an OpenSSL store URI
+  /// (OSSL_STORE, OpenSSL 3), such as a PKCS#11 URI
+  /// ("pkcs11:token=...;object=...") or a TPM handle, served by a
+  /// provider loaded through the OpenSSL configuration.  The key stays
+  /// in the keystore; OpenSSL only holds a handle to it.  Distinct from
+  /// SSL_FILETYPE_PEM and SSL_FILETYPE_ASN1.
+  static constexpr int FILETYPE_STORE = 0x5354;  // "ST"
+
   /// Constructor
   ACE_SSL_Context ();
 
@@ -144,6 +152,12 @@ public:
 
   /// Set the private key file.
   /**
+   * @a type is SSL_FILETYPE_PEM or SSL_FILETYPE_ASN1 for a key file, or
+   * FILETYPE_STORE for a key in a keystore named by an OpenSSL store URI
+   * in @a file_name.  A passphrase or PIN is obtained through the
+   * context's default password callback (SSL_CTX_set_default_passwd_cb);
+   * without one, no interactive prompt is attempted.
+   *
    * @note This method should only be called after a certificate has
    *       been set since key verification is performed against the
    *       certificate, among other things.
@@ -369,6 +383,11 @@ public:
 private:
   /// Verify if the context has been initialized or not.
   void check_context ();
+
+  /// Load the private key named by the OpenSSL store URI @a uri into the
+  /// context.  Returns 1 on success, 0 on failure (like
+  /// SSL_CTX_use_PrivateKey_file()).
+  int private_key_store (const char *uri);
 
   /// @@ More to document
   void ssl_library_init ();

@@ -27,6 +27,10 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 #include <openssl/err.h>
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+# include <openssl/store.h>
+# include <openssl/ui.h>
+#endif
 #include <openssl/rand.h>
 #include <openssl/safestack.h>
 
@@ -564,9 +568,13 @@ ACE_SSL_Context::private_key (const char *file_name,
 
   this->private_key_ = ACE_SSL_Data_File (file_name, type);
 
-  if (::SSL_CTX_use_PrivateKey_file (this->context_,
+  int const loaded =
+    type == FILETYPE_STORE
+    ? this->private_key_store (file_name)
+    : ::SSL_CTX_use_PrivateKey_file (this->context_,
                                      this->private_key_.file_name (),
-                                     this->private_key_.type ()) <= 0)
+                                     this->private_key_.type ());
+  if (loaded <= 0)
     {
       if (ACE::debug ())
         ACE_SSL_Context::report_error ();
@@ -576,6 +584,70 @@ ACE_SSL_Context::private_key (const char *file_name,
     }
   else
     return this->verify_private_key ();
+}
+
+int
+ACE_SSL_Context::private_key_store (const char *uri)
+{
+  ACE_TRACE ("ACE_SSL_Context::private_key_store");
+
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+  // A passphrase or PIN comes from the context's password callback, as
+  // for an encrypted key file.  Without one, use a UI that answers
+  // nothing: OpenSSL's default would prompt on the terminal, which hangs
+  // a service that has none.
+  pem_password_cb *passwd_cb = ::SSL_CTX_get_default_passwd_cb (this->context_);
+  UI_METHOD *ui_method = passwd_cb != nullptr
+    ? ::UI_UTIL_wrap_read_pem_callback (passwd_cb, 0)
+    : nullptr;
+  OSSL_STORE_CTX *store =
+    ::OSSL_STORE_open_ex (uri, nullptr, nullptr,
+                          ui_method != nullptr ? ui_method : ::UI_null (),
+                          ::SSL_CTX_get_default_passwd_cb_userdata (this->context_),
+                          nullptr, nullptr, nullptr);
+
+  EVP_PKEY *pkey = nullptr;
+  if (store != nullptr)
+    {
+      (void) ::OSSL_STORE_expect (store, OSSL_STORE_INFO_PKEY);
+      while (pkey == nullptr && !::OSSL_STORE_eof (store))
+        {
+          OSSL_STORE_INFO *info = ::OSSL_STORE_load (store);
+          if (info == nullptr)
+            break;
+          if (::OSSL_STORE_INFO_get_type (info) == OSSL_STORE_INFO_PKEY)
+            pkey = ::OSSL_STORE_INFO_get1_PKEY (info);
+          ::OSSL_STORE_INFO_free (info);
+        }
+      ::OSSL_STORE_close (store);
+    }
+  if (ui_method != nullptr)
+    ::UI_destroy_method (ui_method);
+
+  if (pkey == nullptr)
+    {
+      // A service cannot run without its key, so say why even without
+      // debugging enabled: OpenSSL's reasons, then the usual causes.
+      ACE_SSL_Context::report_error ();
+      ACELIB_ERROR ((LM_ERROR,
+                     ACE_TEXT ("ACE_SSL (%P|%t) no private key loaded from <%C>; ")
+                     ACE_TEXT ("check the PIN or passphrase (password callback), ")
+                     ACE_TEXT ("that the object exists, and that the OpenSSL ")
+                     ACE_TEXT ("configuration (OPENSSL_CONF) loads its provider\n"),
+                     uri));
+      return 0;
+    }
+
+  int const result = ::SSL_CTX_use_PrivateKey (this->context_, pkey);
+  ::EVP_PKEY_free (pkey);
+  return result;
+#else
+  ACE_UNUSED_ARG (uri);
+  ACELIB_ERROR ((LM_ERROR,
+                 ACE_TEXT ("ACE_SSL (%P|%t) private keys from a store URI ")
+                 ACE_TEXT ("need OpenSSL 3\n")));
+  return 0;
+#endif /* OPENSSL_VERSION_NUMBER >= 0x30000000L */
 }
 
 int

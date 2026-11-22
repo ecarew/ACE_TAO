@@ -296,6 +296,20 @@ TAO::SSLIOP::Protocol_Factory::parse_x509_file (char *arg, char *&path)
   if (ACE_OS::strcasecmp (type_name, "PEM") == 0)
       return SSL_FILETYPE_PEM;
 
+  // STORE:<uri>, a key held in a keystore and named by an OpenSSL store
+  // URI; a PKCS#11 URI may also be given as is (pkcs11:token=...).
+  if (ACE_OS::strcasecmp (type_name, "STORE") == 0)
+      return ACE_SSL_Context::FILETYPE_STORE;
+
+  if (ACE_OS::strcasecmp (type_name, "pkcs11") == 0)
+    {
+      ACE_CString uri ("pkcs11:");
+      uri += path;
+      CORBA::string_free (path);
+      path = CORBA::string_dup (uri.c_str ());
+      return ACE_SSL_Context::FILETYPE_STORE;
+    }
+
   return -1;
 }
 
@@ -695,6 +709,17 @@ TAO::SSLIOP::Protocol_Factory::init (int argc, ACE_TCHAR* argv[])
   // A PEM file may hold the certificate followed by its intermediate CA
   // certificates; load them all so the peer is sent the whole chain and
   // needs only the root.  An ASN.1 (DER) file holds a single certificate.
+  if (certificate_path.in() != nullptr
+      && certificate_type == ACE_SSL_Context::FILETYPE_STORE)
+    {
+      ORBSVCS_ERROR ((LM_ERROR,
+                      ACE_TEXT ("TAO (%P|%t) - -SSLCertificate does not ")
+                      ACE_TEXT ("accept a store URI <%C>; give the ")
+                      ACE_TEXT ("certificate as a PEM or ASN1 file.\n"),
+                      certificate_path.in ()));
+      return -1;
+    }
+
   if (certificate_path.in() != nullptr)
     {
       int const result =

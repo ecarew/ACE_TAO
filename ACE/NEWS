@@ -6,6 +6,13 @@ USER VISIBLE CHANGES BETWEEN ACE-8.0.8 and ACE-8.0.9
   not send its close_notify, and close() returned -1 with EWOULDBLOCK while
   leaving the socket open, leaking the handle (bugzilla 1180).
 
+. ACE_SSL_Context::private_key() accepts a key held in a keystore (HSM,
+  smart card, TPM) with the new type ACE_SSL_Context::FILETYPE_STORE: the name
+  is an OpenSSL 3 store URI, such as a PKCS#11 URI, served by a provider loaded
+  through the OpenSSL configuration. The key stays in the keystore. A PIN or
+  passphrase comes from the context's password callback; without one no
+  interactive prompt is attempted.
+
 USER VISIBLE CHANGES BETWEEN ACE-8.0.7 and ACE-8.0.8
 ====================================================
 
