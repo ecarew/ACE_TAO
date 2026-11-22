@@ -1,6 +1,7 @@
 #include "orbsvcs/Log_Macros.h"
 #include "orbsvcs/Log_Macros.h"
 #include "orbsvcs/Security/SL2_SecurityManager.h"
+#include "orbsvcs/Security/SL2_Audit.h"
 
 #include "tao/ORB_Constants.h"
 #include "ace/Functor.h"
@@ -25,6 +26,26 @@ TAO::Security::SecurityManager::SecurityManager (/* unknown */)
                       CORBA::COMPLETED_NO));
 
   this->access_decision_ = ad;
+
+  SecurityLevel2::AuditChannel_ptr ac;
+  ACE_NEW_THROW_EX (ac,
+                    TAO::Security::AuditChannel,
+                    CORBA::NO_MEMORY (
+                      CORBA::SystemException::_tao_minor_code (
+                        TAO::VMCID,
+                        ENOMEM),
+                      CORBA::COMPLETED_NO));
+  SecurityLevel2::AuditChannel_var channel = ac;
+
+  SecurityLevel2::AuditDecision_ptr adec;
+  ACE_NEW_THROW_EX (adec,
+                    TAO::Security::AuditDecision (channel.in ()),
+                    CORBA::NO_MEMORY (
+                      CORBA::SystemException::_tao_minor_code (
+                        TAO::VMCID,
+                        ENOMEM),
+                      CORBA::COMPLETED_NO));
+  this->audit_decision_ = adec;
 }
 
 TAO::Security::SecurityManager::~SecurityManager ()
@@ -64,7 +85,7 @@ TAO::Security::SecurityManager::access_decision ()
 SecurityLevel2::AuditDecision_ptr
 TAO::Security::SecurityManager::audit_decision ()
 {
-  throw CORBA::NO_IMPLEMENT ();
+  return SecurityLevel2::AuditDecision::_duplicate (this->audit_decision_.in ());
 }
 
 SecurityLevel2::TargetCredentials_ptr

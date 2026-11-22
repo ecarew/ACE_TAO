@@ -222,6 +222,10 @@ namespace TAO
 
       // AccessDecision instance
       SecurityLevel2::AccessDecision_var access_decision_;
+
+      /// AuditDecision instance; its channel writes to the
+      /// process-wide Audit_Logger.
+      SecurityLevel2::AuditDecision_var audit_decision_;
     };
   } // End SL3 namespace
 }  // End TAO namespace

@@ -1,0 +1,7 @@
+// -*- MPC -*-
+project(*Test) : taoexe, security, portableserver {
+  exename = audit_test
+  Source_Files {
+    audit_test.cpp
+  }
+}

@@ -1,6 +1,24 @@
 USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
 ====================================================
 
+. The Security library has an audit logger, and SecurityLevel2's
+  SecurityManager::audit_decision() returns a working AuditDecision instead
+  of raising CORBA::NO_IMPLEMENT. Its AuditChannel, and the C++ class
+  TAO::Security::Audit_Logger, write one syslog record per security decision
+  with facility authpriv, as RFC 5424 structured data:
+    [audit@32473 mode="prod" svc="naming" event="authz" result="deny"
+     reason="NO_ROLE" src="10.20.4.17:51544" op="bind"]
+  Sinks: syslog(3) (default on macOS), unix:PATH (default unix:/dev/log),
+  tcp:HOST:PORT (RFC 5424 with RFC 6587 framing, e.g. to syslog-ng) and
+  stderr. Repeated failures from one source are rate limited into a summary
+  record. If the sink fails, records go to stderr, a SECURITY_DEGRADED alarm
+  is raised (stderr, syslog(3) and registered callbacks) and the sink is
+  retried; the recovery is itself recorded. Settings come from the host file
+  named by ACE_TAO_SECURITY_CONF (default /etc/ace-tao/security.conf):
+  mode, audit_sink and audit_rate (COUNT/SECONDS, default 20/60); the svc
+  field from ACE_TAO_AUDIT_SERVICE or the program name. New test
+  orbsvcs/tests/Security/Audit.
+
 . SSLIOP's -SSLPrivateKey accepts a keystore key: STORE:<uri> with an OpenSSL 3
   store URI, or a PKCS#11 URI as is (pkcs11:token=...;object=...). The PIN is
   given with -SSLPassword. -SSLCertificate still takes a file.
