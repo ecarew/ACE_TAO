@@ -4,6 +4,8 @@
 //
 //   mode_test [ORB options]            ORB_init, print "ORB_INIT OK" or the
 //                                      exception; exit 0 / 2
+//   mode_test -clock                   print the kernel clock state the time
+//                                      check sees: synced, unsynced, unknown
 //   mode_test -unit                    configuration evaluation, including
 //                                      the prod enrollment marker
 //   mode_test -degrade SOCK [ORB opts] prod: requests are refused with
@@ -216,6 +218,13 @@ ACE_TMAIN (int argc, ACE_TCHAR *argv[])
 {
   if (argc > 1 && ACE_OS::strcmp (argv[1], ACE_TEXT ("-unit")) == 0)
     return unit ();
+  if (argc > 1 && ACE_OS::strcmp (argv[1], ACE_TEXT ("-clock")) == 0)
+    {
+      long err = 0;
+      int const s = TAO::Security::Self_Check::clock_synchronized (err);
+      ACE_OS::printf ("%s %ld\n", s == 1 && err <= 1000 ? "synced" : s < 0 ? "unknown" : "unsynced", err);
+      return 0;
+    }
 
   try
     {

@@ -101,6 +101,14 @@ sub write_file {
 
 my $status = 0;
 
+# The prod cases that must start need a synchronized clock.  Where the
+# kernel says it is not (e.g. a container), prod is correctly refused by
+# the time check; check that instead, and that time is the only failure.
+my ($clock) = split (' ', `$exe -clock`);
+$clock = 'unknown' unless defined $clock;
+my %needs_clock = ('prod with SSLIOP, protected key and trust anchor' => 1);
+print "clock: $clock\n";
+
 my $unit = `$exe -unit 2>&1`;
 print $unit;
 if ($? != 0) {
@@ -122,6 +130,17 @@ foreach my $c (@cases) {
     }
     my $out = `$exe $args 2>&1`;
     my $exit = $? >> 8;
+    if ($needs_clock{$name} && $clock eq 'unsynced') {
+        my @fails = ($out =~ /ACE\/TAO security: FAIL (\w+):/g);
+        if ($exit == 2 && "@fails" eq 'time') {
+            print "ok: $name (clock not synchronized here: refused by the time check alone)\n";
+        }
+        else {
+            print STDERR "ERROR: $name: unsynchronized clock should fail only the time check\n$out\n";
+            $status = 1;
+        }
+        next;
+    }
     my @problems;
     push @problems, "exit $exit, want $want_exit" if $exit != $want_exit;
     foreach my $re (@$must) {
@@ -140,6 +159,12 @@ foreach my $c (@cases) {
 }
 
 # Running monitor: requests are refused while the audit sink is down.
+# It needs a prod ORB that starts, so a synchronized clock.
+if ($clock eq 'unsynced') {
+    print "skipped: degraded-mode case (clock not synchronized here)\n";
+    unlink $conf, $svc, $sock, "$dir/mode_test_events.db";
+    exit $status;
+}
 write_file ($conf, "mode = prod\naudit_sink = unix:$sock\ntime_sync_wait = 0\ntrust_anchor_sha256 = $anchor\n", 0600);
 write_file ($svc, ssliop ($good_ssl), 0600);
 $ENV{'ACE_TAO_SECURITY_CONF'} = $conf;
