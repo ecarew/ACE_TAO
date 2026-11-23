@@ -174,6 +174,74 @@ check_case ('unknown mode is a usage error', 'init --mode production', 64, ['mus
 check_case ('dev mode check runs no security checks', 'set-mode dev', 0, ['to dev']);
 check_case ('dev host check', 'check', [0, 1], ['OK\s+config\s+mode=dev'], ['audit', 'time', 'FAIL']);
 
+# key create / key check (software keys; keystore keys and step-ca are
+# exercised in the lab: CORBA lab/setup/keys_lab_test.sh).
+open (my $pw, '>', "$work/key-pass"); print $pw "key-pass\n"; close ($pw);
+check_case ('key create file', "key create --type file --out $work/svc.key --password-file $work/key-pass", 0,
+            ['Created a file key \(P-256\)', 'OK\s+protection\s+software key in a passphrase-encrypted file',
+             'OK\s+signature', 'reason="KEY_CREATED".*key_type="file"',
+             "SSLIOP: -SSLPrivateKey PEM:$work/svc.key -SSLPassword file:$work/key-pass"]);
+my $k = slurp ("$work/svc.key");
+my $kmode = (stat ("$work/svc.key"))[2] & 07777;
+if ($k =~ /^-----BEGIN ENCRYPTED PRIVATE KEY-----/ && $kmode == 0600) {
+    print "ok: the key file is encrypted and mode 0600\n";
+}
+else {
+    printf STDERR "ERROR: key file mode %04o:\n%s\n", $kmode, $k; $status = 1;
+}
+check_case ('key create does not replace a key', "key create --type file --out $work/svc.key --password-file $work/key-pass", 2,
+            ['exists; not replacing a key']);
+check_case ('a file key needs a password', "key create --type file --out $work/other.key", 64,
+            ['needs --password-file']);
+check_case ('unknown key type', "key create --type hsm --out $work/other.key", 64, ['must be file, pkcs11, tpm2 or sep']);
+open ($pw, '>', "$work/wrong-pass"); print $pw "wrong"; close ($pw);
+check_case ('key check with the wrong password', "key check --key PEM:$work/svc.key --password-file $work/wrong-pass", 2,
+            ['FAIL\s+load\s+cannot load the private key']);
+system ("cp $certs/server_key_enc.pem $certs/server_key.pem $work/ && chmod 600 $work/server_key_enc.pem $work/server_key.pem");
+check_case ('key check with its certificate', "key check --key $work/server_key_enc.pem --password-file $certs/password.txt --cert $certs/server_cert.pem", 0,
+            ['OK\s+certificate\s+matches /CN=mode-test', 'OK\s+expiry\s+valid until 2046']);
+check_case ('key check finds an expired certificate', "key check --key $work/server_key_enc.pem --password-file $certs/password.txt --cert $certs/server_cert_expired.pem", 2,
+            ['OK\s+certificate', 'FAIL\s+expiry\s+expired 2020-02-01']);
+check_case ('key check finds a certificate for another key', "key check --key PEM:$work/svc.key --password-file $work/key-pass --cert $certs/server_cert.pem", 2,
+            ['FAIL\s+certificate\s+.* is for a different key']);
+check_case ('key check finds an unencrypted key', "key check --key $work/server_key.pem", 2,
+            ['FAIL\s+protection\s+software key stored UNENCRYPTED'], ['FAIL\s+permissions']);
+chmod (0644, "$work/server_key.pem");
+check_case ('key check finds a readable key file', "key check --key $work/server_key.pem", 2,
+            ['FAIL\s+permissions\s+.* is mode 0644']);
+check_case ('set-mode prod for the key policy', 'set-mode prod', 0, ['to prod']);
+check_case ('prod refuses an unprotected key', "key create --type file --out $work/other.key --unprotected", 2,
+            ['prod refuses unprotected keys']);
+check_case ('back to dev', 'set-mode dev --yes', 0, ['to dev']);
+
+# cert request / cert renew: the checks made before the CA is contacted.
+use MIME::Base64 qw(encode_base64url);
+sub token {
+    my $claims = shift;
+    return encode_base64url ('{"alg":"ES256","typ":"JWT"}') . '.' . encode_base64url ($claims) . '.c2ln';
+}
+sub write_file { my ($f, $t) = @_; open (my $fh, '>', $f); print $fh $t; close ($fh); }
+my $later = time () + 300;
+write_file ("$work/bad.tok", "not a token\n");
+check_case ('cert request needs a step-ca token', "cert request --key PEM:$work/svc.key --password-file $work/key-pass --token-file $work/bad.tok --out $work/svc.pem --root $certs/ca.pem", 2,
+            ['does not hold a step-ca token']);
+write_file ("$work/expired.tok", token ('{"sub":"svc.ace-tao.test","aud":"https://localhost:1/1.0/sign","exp":1600000000}'));
+check_case ('cert request refuses an expired token', "cert request --key PEM:$work/svc.key --password-file $work/key-pass --token-file $work/expired.tok --out $work/svc.pem --root $certs/ca.pem", 2,
+            ['the token expired']);
+write_file ("$work/sha.tok", token ('{"sub":"svc.ace-tao.test","sans":["svc.ace-tao.test"],"aud":["https://localhost:1/1.0/sign"],"exp":' . $later . ',"sha":"' . ('ab' x 32) . '"}'));
+check_case ('cert request checks the root against the token', "cert request --key PEM:$work/svc.key --password-file $work/key-pass --token-file $work/sha.tok --out $work/svc.pem --root $certs/ca.pem", 2,
+            ['is not the one the token names']);
+check_case ('cert request needs a root', "cert request --key PEM:$work/svc.key --token-file $work/sha.tok --out $work/svc.pem", 64,
+            ['--root PEM is required']);
+check_case ('cert renew: a long-lived certificate is not due', "cert renew --key $work/server_key_enc.pem --password-file $certs/password.txt --cert $certs/server_cert.pem --root $certs/ca.pem --ca-url https://localhost:1", 0,
+            ['Not due: .* more day\(s\); renewal starts 2040']);
+check_case ('cert renew refuses an expired certificate', "cert renew --key $work/server_key_enc.pem --password-file $certs/password.txt --cert $certs/server_cert_expired.pem --root $certs/ca.pem --ca-url https://localhost:1", 2,
+            ['expired 2020-02-01.*run cert request']);
+check_case ('cert renew needs a CA URL', "cert renew --key $work/server_key_enc.pem --cert $certs/server_cert.pem --root $certs/ca.pem", 64,
+            ['--ca-url https://HOST\[:PORT\] is required']);
+check_case ('cert renew --force reports an unreachable CA', "cert renew --key $work/server_key_enc.pem --password-file $certs/password.txt --cert $certs/server_cert.pem --root $certs/ca.pem --ca-url https://127.0.0.1:1 --force", 2,
+            ['cannot connect to https://127.0.0.1:1']);
+
 # install / uninstall into a scratch tree (no root, nothing loaded).
 my $tree = "$work/tree";
 my $bin = "$ENV{TAO_ROOT}/orbsvcs/Naming_Service";

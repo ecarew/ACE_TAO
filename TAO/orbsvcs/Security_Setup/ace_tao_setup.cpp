@@ -25,6 +25,8 @@
 //                               undoes exactly what the manifest records
 //   run --svc-conf FILE -- COMMAND...
 //                               check --gate, then exec the service (launchd)
+//   key create|check ...        service keys in a keystore (see keys.cpp)
+//   cert request|renew ...      certificates from step-ca (see keys.cpp)
 //
 // --conf defaults to ACE_TAO_SECURITY_CONF or TAO_SECURITY_CONF_DEFAULT,
 // --marker to TAO_SECURITY_ENROLLED_MARKER (the ORB_init guard always uses
@@ -33,6 +35,7 @@
 // failure or refusal, 64 usage error.
 
 #include "install.h"
+#include "keys.h"
 
 #include "orbsvcs/Security/Audit_Logger.h"
 #include "orbsvcs/Security/Self_Check.h"
@@ -85,6 +88,9 @@ namespace
     "          [--root DIR] [--bin-dir DIR] [--no-start] [--dry-run]\n"
     "  uninstall [--root DIR] [--purge] [--force] [--dry-run]\n"
     "  run --svc-conf FILE -- COMMAND [ARGS...]\n"
+    "  key create --type file|pkcs11|tpm2|sep ... | key check --key SPEC ...\n"
+    "  cert request --key SPEC --token-file F --out PEM ... | cert renew --key SPEC --cert PEM ...\n"
+    "  (key or cert alone prints their options)\n"
     "  (check --gate exits 2 only on failures, 0 otherwise)\n";
 
   int
@@ -769,6 +775,18 @@ namespace
   }
 }
 
+void
+setup_audit (char const *reason, std::map<std::string, std::string> const &fields)
+{
+  audit (reason, fields);
+}
+
+std::string
+setup_conf_get (char const *key, char const *fallback)
+{
+  return host ().get (key, fallback);
+}
+
 int
 ACE_TMAIN (int argc, ACE_TCHAR *argv[])
 {
@@ -818,6 +836,10 @@ ACE_TMAIN (int argc, ACE_TCHAR *argv[])
     return setup_install (rest, args, prog);
   if (cmd == "uninstall")
     return setup_uninstall (rest, args);
+  if (cmd == "key")
+    return setup_key (rest, args);
+  if (cmd == "cert")
+    return setup_cert (rest, args);
   if (cmd == "run")
     return setup_run (rest, args, prog, conf_path.c_str ());
   return usage (("unknown command " + cmd).c_str ());

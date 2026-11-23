@@ -71,6 +71,9 @@ namespace TAO
       constexpr char const MODE_SET[] = "MODE_SET";
       constexpr char const HOST_ENROLLED[] = "HOST_ENROLLED";
       constexpr char const HOST_UNENROLLED[] = "HOST_UNENROLLED";
+      constexpr char const KEY_CREATED[] = "KEY_CREATED";
+      constexpr char const CERT_ISSUED[] = "CERT_ISSUED";
+      constexpr char const CERT_RENEWED[] = "CERT_RENEWED";
     }
 
     /**

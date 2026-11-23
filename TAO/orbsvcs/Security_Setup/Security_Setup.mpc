@@ -4,5 +4,6 @@ project(Security_Setup) : orbsvcsexe, install, security, ssl {
   Source_Files {
     ace_tao_setup.cpp
     install.cpp
+    keys.cpp
   }
 }
