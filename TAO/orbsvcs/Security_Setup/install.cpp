@@ -357,7 +357,10 @@ setup_install (int argc, ACE_TCHAR *argv[], char const *self)
         }
       else if (is_mac)
         {
-          int const id = dry ? 300 : free_mac_id ();
+          ACE_OS::printf ("  note: macOS may now ask whether Terminal (or the program running this) may\n"
+                          "        administer this computer; that approval is for creating the service\n"
+                          "        account. Unattended installs need it granted in advance.\n");
+          int const id = free_mac_id ();
           if (id < 0)
             return fail ("no free id in 300-399 for the service account");
           std::string const ids = std::to_string (id);
@@ -543,6 +546,15 @@ setup_uninstall (int argc, ACE_TCHAR *argv[])
   ACE_OS::printf ("%s what %s recorded%s\n", dry ? "Would undo" : "Undoing", p.manifest.c_str (),
                   dry ? " (dry run: nothing is changed)" : "");
   std::vector<bool> kept (lines.size (), false);
+  std::vector<std::string> removed;   // removed, or (dry run) would be
+  auto is_removed = [&] (std::string const &path)
+    {
+      for (auto const &r : removed)
+        if (r == path)
+          return true;
+      return false;
+    };
+  bool account_note = false;
   int problems = 0;
   bool reload_systemd = false;
   auto act = [&] (std::vector<std::string> const &args, bool tolerate) -> bool
@@ -613,6 +625,7 @@ setup_uninstall (int argc, ACE_TCHAR *argv[])
                   ACE_OS::fprintf (stderr, "ace-tao-setup:   %s\n", ACE_OS::strerror (errno));
                   continue;
                 }
+              removed.push_back (path);
             }
           if (w.size () >= 4)
             {
@@ -627,6 +640,12 @@ setup_uninstall (int argc, ACE_TCHAR *argv[])
       else if ((kind == "user" || kind == "group") && w.size () >= 3 && w[2] == "created")
         {
           bool ok;
+          if (is_mac && !account_note)
+            {
+              account_note = true;
+              ACE_OS::printf ("  note: macOS may now ask whether Terminal (or the program running this) may\n"
+                              "        administer this computer; that approval is for deleting the service account.\n");
+            }
           if (is_mac)
             ok = act ({"/usr/bin/dscl", ".", "-delete", (kind == "user" ? "/Users/" : "/Groups/") + w[1]}, false);
           else
@@ -645,17 +664,32 @@ setup_uninstall (int argc, ACE_TCHAR *argv[])
   // way, and write back whatever had to stay so a later run can finish.
   if (!dry)
     ACE_OS::unlink (p.manifest.c_str ());
+  removed.push_back (p.manifest);
 
   std::vector<std::string> kept_dirs;
+  auto is_kept_dir = [&] (std::string const &path)
+    {
+      for (auto const &k : kept_dirs)
+        if (k == path)
+          return true;
+      return false;
+    };
+  // Empty once everything removed (or, dry, to be removed) is gone.
+  auto effectively_empty = [&] (std::string const &d)
+    {
+      std::error_code ec;
+      for (auto const &entry : std::filesystem::directory_iterator (d, ec))
+        if (!is_removed (entry.path ().string ()))
+          return false;
+      return true;
+    };
   auto holds_only_kept = [&] (std::string const &d)
     {
       std::error_code ec;
       for (auto const &entry : std::filesystem::directory_iterator (d, ec))
         {
-          bool found = false;
-          for (auto const &k : kept_dirs)
-            found = found || entry.path ().string () == k;
-          if (!found)
+          std::string const e = entry.path ().string ();
+          if (!is_removed (e) && !is_kept_dir (e))
             return false;
         }
       return true;
@@ -667,23 +701,22 @@ setup_uninstall (int argc, ACE_TCHAR *argv[])
       if (!exists (d))
         continue;
       std::error_code ec;
-      bool empty = std::filesystem::is_empty (d, ec);
+      bool empty = effectively_empty (d);
       bool const service_data = d.find ("/ace-tao") != std::string::npos
         && (d.rfind (p.state, 0) == 0 || d == p.log || d == p.run);
       if (!empty && purge && service_data && !holds_only_kept (d))
         {
           for (auto const &entry : std::filesystem::directory_iterator (d, ec))
             {
-              bool is_kept = false;
-              for (auto const &k : kept_dirs)
-                is_kept = is_kept || entry.path ().string () == k;
-              if (is_kept)
+              std::string const e = entry.path ().string ();
+              if (is_kept_dir (e) || is_removed (e))
                 continue;
-              ACE_OS::printf ("  purge %s\n", entry.path ().c_str ());
+              ACE_OS::printf ("  purge %s\n", e.c_str ());
               if (!dry)
                 std::filesystem::remove_all (entry.path (), ec);
+              removed.push_back (e);
             }
-          empty = dry || std::filesystem::is_empty (d, ec);
+          empty = effectively_empty (d);
         }
       if (!empty)
         {
@@ -705,7 +738,9 @@ setup_uninstall (int argc, ACE_TCHAR *argv[])
           kept[n] = true;
           kept_dirs.push_back (d);
           ACE_OS::fprintf (stderr, "ace-tao-setup:   %s\n", ACE_OS::strerror (errno));
+          continue;
         }
+      removed.push_back (d);
     }
 
   bool any_kept = false;
