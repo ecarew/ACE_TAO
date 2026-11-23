@@ -17,12 +17,22 @@
 //                               deleting or editing the configuration cannot
 //                               downgrade it
 //   unenroll --reason TEXT      removes the enrollment marker
+//   install [--port N] [--label-prefix P] [--root DIR] [--no-start] [--dry-run]
+//                               creates directories, the service account and
+//                               the service definitions, recording each in a
+//                               manifest (see install.cpp)
+//   uninstall [--purge] [--force] [--dry-run]
+//                               undoes exactly what the manifest records
+//   run --svc-conf FILE -- COMMAND...
+//                               check --gate, then exec the service (launchd)
 //
 // --conf defaults to ACE_TAO_SECURITY_CONF or TAO_SECURITY_CONF_DEFAULT,
 // --marker to TAO_SECURITY_ENROLLED_MARKER (the ORB_init guard always uses
 // the built-in marker path; --marker exists for testing).  Every change is
 // written to the audit log.  Exit codes: 0 success, 1 warnings (check), 2
 // failure or refusal, 64 usage error.
+
+#include "install.h"
 
 #include "orbsvcs/Security/Audit_Logger.h"
 #include "orbsvcs/Security/Self_Check.h"
@@ -69,7 +79,12 @@ namespace
     "       [--audit-sink SINK] [--allowed-protocols LIST] [--force] [--yes]\n"
     "  set-mode dev|test|prod|embedded [--yes]\n"
     "  enroll [--yes]\n"
-    "  unenroll --reason TEXT\n";
+    "  unenroll --reason TEXT\n"
+    "  install [--service naming] [--port N] [--listen ADDR] [--label-prefix P] [--user NAME]\n"
+    "          [--root DIR] [--bin-dir DIR] [--no-start] [--dry-run]\n"
+    "  uninstall [--root DIR] [--purge] [--force] [--dry-run]\n"
+    "  run --svc-conf FILE -- COMMAND [ARGS...]\n"
+    "  (check --gate exits 2 only on failures, 0 otherwise)\n";
 
   int
   usage (char const *problem = nullptr)
@@ -390,12 +405,14 @@ namespace
   cmd_check (int argc, ACE_TCHAR *argv[], char const *prog)
   {
     std::string svc_conf;
-    bool json = false;
+    bool json = false, gate = false;
     for (int i = 0; i < argc; ++i)
       {
         std::string const a = ACE_TEXT_ALWAYS_CHAR (argv[i]);
         if (a == "--json")
           json = true;
+        else if (a == "--gate")
+          gate = true;
         else if (a == "--svc-conf" && i + 1 < argc)
           svc_conf = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
         else
@@ -457,7 +474,7 @@ namespace
     else
       for (auto const &f : findings)
         ACE_OS::printf ("%-5s %-22s %s\n", status_word (f.status), f.name.c_str (), f.detail.c_str ());
-    return worst;
+    return gate ? setup_gate_status (worst) : worst;
   }
 
   // ------------------------------------------------------------------
@@ -731,5 +748,11 @@ ACE_TMAIN (int argc, ACE_TCHAR *argv[])
     return cmd_enroll (rest, args);
   if (cmd == "unenroll")
     return cmd_unenroll (rest, args);
+  if (cmd == "install")
+    return setup_install (rest, args, prog);
+  if (cmd == "uninstall")
+    return setup_uninstall (rest, args);
+  if (cmd == "run")
+    return setup_run (rest, args, prog, conf_path.c_str ());
   return usage (("unknown command " + cmd).c_str ());
 }

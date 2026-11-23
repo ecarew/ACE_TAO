@@ -149,5 +149,33 @@ check_case ('unknown mode is a usage error', 'init --mode production', 64, ['mus
 check_case ('dev mode check runs no security checks', 'set-mode dev', 0, ['to dev']);
 check_case ('dev host check', 'check', [0, 1], ['OK\s+config\s+mode=dev'], ['audit', 'time', 'FAIL']);
 
+# install / uninstall into a scratch tree (no root, nothing loaded).
+my $tree = "$work/tree";
+my $bin = "$ENV{TAO_ROOT}/orbsvcs/Naming_Service";
+check_case ('install dry run changes nothing', "install --root $tree --bin-dir $bin --port 2899 --dry-run", 0,
+            ['Would install', 'Dry run complete']);
+if (-e $tree) { print STDERR "ERROR: dry run created $tree\n"; $status = 1; }
+check_case ('install into a scratch tree', "install --root $tree --bin-dir $bin --port 2899 --label-prefix test.ace-tao --no-start", 0,
+            ['Installed. Manifest:']);
+my $man = slurp ("$tree/var/lib/ace-tao/install-manifest");
+if ($man =~ /^dir \Q$tree\E\/var\/lib\/ace-tao$/m && $man =~ /^file \S+naming\.svc\.conf [0-9a-f]{64}$/m) {
+    print "ok: manifest records directories and files with checksums\n";
+}
+else {
+    print STDERR "ERROR: manifest not as expected:\n$man\n"; $status = 1;
+}
+check_case ('second install is refused', "install --root $tree --bin-dir $bin --no-start", 2, ['already installed']);
+open ($fh, '>', "$tree/var/lib/ace-tao/naming/NameService"); print $fh "data\n"; close ($fh);
+check_case ('uninstall keeps service data and its record', "uninstall --root $tree", 2,
+            ['keep \S+/naming: not empty', 'records them']);
+check_case ('uninstall --purge finishes', "uninstall --root $tree --purge", 0,
+            ['purge \S+NameService', 'everything install created is gone']);
+opendir (my $dh, $tree);
+my @left = grep { !/^\.\.?$/ } readdir ($dh);
+closedir ($dh);
+if (@left) { print STDERR "ERROR: left in the scratch tree: @left\n"; $status = 1; }
+else { print "ok: scratch tree is empty again\n"; }
+check_case ('uninstall with nothing installed', "uninstall --root $tree", 2, ['nothing to uninstall']);
+
 rmtree ($work);
 exit $status;
