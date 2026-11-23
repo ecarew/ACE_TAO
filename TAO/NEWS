@@ -1,6 +1,17 @@
 USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
 ====================================================
 
+. Certificate expiry and authenticated time are checked. SSLIOP's startup
+  self-check (so every service, ace-tao-setup check --svc-conf and the
+  hourly check) reports the service certificate's remaining validity: an
+  expired or not-yet-valid certificate fails prod, and one that expires
+  within cert_warn_days (default 14) warns in every mode. ace-tao-setup
+  check reports whether chrony authenticates its time sources with NTS
+  (RFC 8915), since plain NTP can be spoofed to make an expired
+  certificate look valid; missing NTS warns, and require_nts = yes makes it
+  fail prod. ace-tao-setup install and uninstall also gained accurate dry
+  runs and a note before the macOS account steps.
+
 . New tool ace-tao-setup (orbsvcs/Security_Setup) prepares and checks a
   host's security configuration: status; check [--svc-conf FILE] [--json]
   (host checks, plus a service's own startup self-check run in-process

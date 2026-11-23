@@ -92,6 +92,31 @@ check_case ('init with unconfirmed anchors and no terminal is refused',
 check_case ('host check: warnings only', 'check', $warn_exit,
             ['OK\s+config\s+mode=prod', 'WARN\s+enrollment', 'OK\s+audit', 'OK\s+trust_anchors']);
 
+# Authenticated time through stand-ins for chronyc.
+my %chrony = (
+  'nts' => "time.cloudflare.com,NTS,1,15,256,33,0,0,8,64\npool.ntp.org,-,0,0,0,0,0,0,0,0\n",
+  'plain' => "pool.ntp.org,-,0,0,0,0,0,0,0,0\n",
+);
+foreach my $k (keys %chrony) {
+    open (my $c, '>', "$work/chronyc-$k");
+    print $c "#!/bin/sh\ncat <<'EOF'\n$chrony{$k}EOF\n";
+    close ($c);
+    chmod (0755, "$work/chronyc-$k");
+}
+check_case ('NTS sources found', "check --chronyc $work/chronyc-nts", [1, 2],
+            ['OK\s+nts\s+chrony: 1 of 2 source\(s\) use NTS']);
+check_case ('no NTS sources warns', "check --chronyc $work/chronyc-plain", [1, 2],
+            ['WARN\s+nts\s+chrony has no NTS sources']);
+check_case ('chrony not found warns', "check --chronyc $work/no-such-chronyc", [1, 2],
+            ['WARN\s+nts\s+cannot verify authenticated time: chrony not found']);
+open ($fh, '>>', $conf); print $fh "require_nts = yes\n"; close ($fh);
+check_case ('require_nts makes missing NTS fail prod', "check --chronyc $work/chronyc-plain", 2,
+            ['FAIL\s+nts\s+chrony has no NTS sources']);
+check_case ('require_nts is satisfied by NTS', "check --chronyc $work/chronyc-nts", [1, 2],
+            ['OK\s+nts'], ['FAIL\s+nts']);
+my $without = join ('', grep { !/^require_nts/ } split (/^/m, slurp ($conf)));
+open ($fh, '>', $conf); print $fh $without; close ($fh);
+
 open ($fh, '>', $svc);
 print $fh "dynamic SSLIOP_Factory Service_Object * TAO_SSLIOP:_make_TAO_SSLIOP_Protocol_Factory() "
         . "\"-SSLAuthenticate SERVER_AND_CLIENT -SSLCAfile PEM:$certs/ca.pem -SSLCertificate PEM:$certs/server_cert.pem "

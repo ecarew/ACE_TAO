@@ -29,6 +29,7 @@
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/x509.h>
+#include <openssl/err.h>
 
 #include <string>
 
@@ -137,7 +138,8 @@ namespace
   /// passphrase comes from, and whether the trusted CAs are exactly the
   /// configured trust anchors.  In prod a weak setting is a failure.
   void
-  report_mode_checks (char const *private_key_path, int private_key_type,
+  report_mode_checks (char const *certificate_path, int certificate_type,
+                      char const *private_key_path, int private_key_type,
                       std::string const &password_source,
                       char const *ca_file, char const *ca_dir, bool no_protection)
   {
@@ -146,6 +148,54 @@ namespace
       return;
     Self_Check::Status const bad =
       host.mode == TAO_Security_Mode::MODE_PROD ? Self_Check::CHECK_FAIL : Self_Check::CHECK_WARN;
+
+    // Certificate validity: expired or not yet valid fails prod; close to
+    // expiry (cert_warn_days, default 14) warns in every mode, so renewal
+    // is noticed before the handshakes start failing.
+    if (certificate_path != nullptr)
+      {
+        FILE *const cfp = ACE_OS::fopen (certificate_path, ACE_TEXT ("rb"));
+        X509 *cert = nullptr;
+        if (cfp != nullptr)
+          {
+            cert = certificate_type == SSL_FILETYPE_ASN1
+              ? ::d2i_X509_fp (cfp, nullptr)
+              : ::PEM_read_X509 (cfp, nullptr, nullptr, nullptr);
+            ACE_OS::fclose (cfp);
+          }
+        if (cert == nullptr)
+          Self_Check::contribute ("ssliop_cert", bad,
+                                  (std::string ("cannot read the certificate ") + certificate_path).c_str ());
+        else
+          {
+            long warn_days = 14;
+            std::string const w = host.get ("cert_warn_days");
+            if (!w.empty ())
+              warn_days = ACE_OS::atoi (w.c_str ());
+            int days = 0, secs = 0;
+            int before_days = 0, before_secs = 0;
+            ::ASN1_TIME_diff (&days, &secs, nullptr, ::X509_get0_notAfter (cert));
+            ::ASN1_TIME_diff (&before_days, &before_secs, nullptr, ::X509_get0_notBefore (cert));
+            char subject[256];
+            ::X509_NAME_oneline (::X509_get_subject_name (cert), subject, sizeof subject);
+            ::X509_free (cert);
+            std::string const who = std::string (subject) + " (" + certificate_path + ")";
+            Self_Check::banner_field ("cert", (std::to_string (days) + "d").c_str ());
+            if (before_days > 0 || (before_days == 0 && before_secs > 0))
+              Self_Check::contribute ("ssliop_cert", bad, ("certificate not valid yet: " + who).c_str ());
+            else if (days < 0 || (days == 0 && secs < 0))
+              Self_Check::contribute ("ssliop_cert", bad,
+                                      ("certificate expired " + std::to_string (-days) + " day(s) ago: " + who).c_str ());
+            else if (days < warn_days)
+              Self_Check::contribute ("ssliop_cert", Self_Check::CHECK_WARN,
+                                      ("certificate expires in " + std::to_string (days) + " day(s) (cert_warn_days "
+                                       + std::to_string (warn_days) + "): renew " + who).c_str ());
+            else
+              Self_Check::contribute ("ssliop_cert", Self_Check::CHECK_OK,
+                                      ("certificate valid for " + std::to_string (days) + " more day(s): " + who).c_str ());
+            ::ERR_clear_error ();
+          }
+      }
 
     // Private key.
     if (private_key_path == nullptr)
@@ -1008,7 +1058,8 @@ TAO::SSLIOP::Protocol_Factory::init (int argc, ACE_TCHAR* argv[])
 #endif
     }
 
-  report_mode_checks (private_key_path.in (), private_key_type, password_source,
+  report_mode_checks (certificate_path.in (), certificate_type,
+                      private_key_path.in (), private_key_type, password_source,
                       ca_file.in (), ca_dir.in (), no_protection);
 
   if (this->register_orb_initializer () != 0)

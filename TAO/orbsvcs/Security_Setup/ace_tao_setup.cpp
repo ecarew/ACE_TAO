@@ -70,11 +70,12 @@ namespace
 
   std::string conf_path;
   std::string marker_path;
+  std::string chronyc_path;   // check --chronyc; empty: search the usual places
 
   char const usage_text[] =
     "usage: ace-tao-setup [--conf PATH] [--marker PATH] COMMAND [options]\n"
     "  status\n"
-    "  check [--svc-conf FILE] [--json]\n"
+    "  check [--svc-conf FILE] [--json] [--gate] [--chronyc PATH]\n"
     "  init --mode dev|test|prod|embedded [--trust-anchor-file PEM]... [--trust-anchor SHA256]...\n"
     "       [--audit-sink SINK] [--allowed-protocols LIST] [--force] [--yes]\n"
     "  set-mode dev|test|prod|embedded [--yes]\n"
@@ -100,6 +101,16 @@ namespace
   {
     ACE_OS::fprintf (stderr, "ace-tao-setup: %s\n", why.c_str ());
     return EXIT_FAIL;
+  }
+
+  constexpr bool
+  is_apple ()
+  {
+#if defined (__APPLE__)
+    return true;
+#else
+    return false;
+#endif
   }
 
   bool
@@ -394,6 +405,59 @@ namespace
       f.push_back ({"time", bad, "clock not synchronized or error estimate " + std::to_string (err)
                                  + " ms above max_clock_error " + std::to_string (max_err) + " ms"});
 
+    // Authenticated time (NTS, RFC 8915): plain NTP can be spoofed to make
+    // an expired certificate look valid.  chrony reports, per source,
+    // whether NTS authenticates it.  Missing NTS warns; with
+    // require_nts = yes it is as bad as unsynchronized time.
+    {
+      Self_Check::Status const nts_bad = h.get ("require_nts") == "yes" ? bad : Self_Check::CHECK_WARN;
+      std::vector<std::string> candidates;
+      if (!chronyc_path.empty ())
+        candidates.push_back (chronyc_path);
+      else
+        candidates = {"/usr/bin/chronyc", "/usr/sbin/chronyc", "/opt/homebrew/bin/chronyc", "/usr/local/bin/chronyc"};
+      std::string chronyc;
+      for (auto const &c : candidates)
+        if (ACE_OS::access (c.c_str (), X_OK) == 0 && c.find ('\'') == std::string::npos)
+          {
+            chronyc = c;
+            break;
+          }
+      if (chronyc.empty ())
+        f.push_back ({"nts", nts_bad, std::string ("cannot verify authenticated time: chrony not found")
+                                      + (is_apple () ? " (the macOS time service does not support NTS)" : "")});
+      else
+        {
+          int sources = 0, nts = 0;
+          FILE *const pp = ::popen (("'" + chronyc + "' -c -n authdata 2>/dev/null").c_str (), "r");
+          int rc = -1;
+          if (pp != nullptr)
+            {
+              char line[512];
+              while (ACE_OS::fgets (line, sizeof line, pp) != nullptr)
+                {
+                  std::string const l (line);
+                  size_t const c1 = l.find (',');
+                  if (c1 == std::string::npos)
+                    continue;
+                  ++sources;
+                  size_t const c2 = l.find (',', c1 + 1);
+                  if (l.substr (c1 + 1, c2 == std::string::npos ? std::string::npos : c2 - c1 - 1) == "NTS")
+                    ++nts;
+                }
+              rc = ::pclose (pp);
+            }
+          if (rc != 0)
+            f.push_back ({"nts", nts_bad, chronyc + " could not report its sources (is chronyd running?)"});
+          else if (nts > 0)
+            f.push_back ({"nts", Self_Check::CHECK_OK, "chrony: " + std::to_string (nts) + " of "
+                                                       + std::to_string (sources) + " source(s) use NTS"});
+          else
+            f.push_back ({"nts", nts_bad, "chrony has no NTS sources (" + std::to_string (sources)
+                                          + " plain NTP); add the nts option to its server lines"});
+        }
+    }
+
     if (h.get ("trust_anchor_sha256").empty ())
       f.push_back ({"trust_anchors", bad, "trust_anchor_sha256 is not set (init --trust-anchor-file CA.pem)"});
     else
@@ -413,6 +477,8 @@ namespace
           json = true;
         else if (a == "--gate")
           gate = true;
+        else if (a == "--chronyc" && i + 1 < argc)
+          chronyc_path = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
         else if (a == "--svc-conf" && i + 1 < argc)
           svc_conf = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
         else

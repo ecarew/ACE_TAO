@@ -58,7 +58,16 @@ my @cases = (
   ['prod with SSLIOP, protected key and trust anchor', $prod, 0600, ssliop ($good_ssl), 0,
      ['MODE=PROD .*key=encrypted-file .*ca=sha256:d4a1a818bbba .*0 fail', 'ORB_INIT OK',
       'check protocols OK', 'check ssliop_key OK', 'check ssliop_trust OK', 'check core_dumps OK',
+      'check ssliop_cert OK', 'cert=\d+d',
       'event="secenv" result="ok" reason="OK" phase="startup"'], ['FAIL']],
+  ['prod with an expired certificate is refused', $prod, 0600,
+     ssliop ("-SSLAuthenticate SERVER_AND_CLIENT -SSLCAfile PEM:$dir/ca.pem "
+           . "-SSLCertificate PEM:$dir/server_cert_expired.pem -SSLPrivateKey PEM:$dir/server_key_enc.pem "
+           . "-SSLPassword file:$dir/password.txt"), 2,
+     ['FAIL ssliop_cert: certificate expired \d+ day\(s\) ago: /CN=mode-test-expired', 'ORB_INIT REFUSED'], []],
+  ['a certificate within cert_warn_days warns but runs', $prod . "cert_warn_days = 100000\n", 0600,
+     ssliop ($good_ssl), 0,
+     ['WARN ssliop_cert: certificate expires in \d+ day\(s\) \(cert_warn_days 100000\)', 'ORB_INIT OK'], ['FAIL']],
   ['prod with plain IIOP also loaded is refused', $prod, 0600,
      ssliop ($good_ssl, "-ORBProtocolFactory IIOP_Factory -ORBProtocolFactory SSLIOP_Factory"), 2,
      ['FAIL protocols: protocol factory IIOP_Factory is not in allowed_protocols', 'ORB_INIT REFUSED'], []],
@@ -106,7 +115,8 @@ my $status = 0;
 # the time check; check that instead, and that time is the only failure.
 my ($clock) = split (' ', `$exe -clock`);
 $clock = 'unknown' unless defined $clock;
-my %needs_clock = ('prod with SSLIOP, protected key and trust anchor' => 1);
+my %needs_clock = ('prod with SSLIOP, protected key and trust anchor' => 1,
+                   'a certificate within cert_warn_days warns but runs' => 1);
 print "clock: $clock\n";
 
 my $unit = `$exe -unit 2>&1`;
