@@ -1,6 +1,10 @@
 #include "orbsvcs/Log_Macros.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Invocation_Interceptor.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Current.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Deny_List.h"
+#include "orbsvcs/Security/Audit_Logger.h"
+
+#include <openssl/x509.h>
 
 #include "orbsvcs/SecurityLevel2C.h"
 
@@ -85,6 +89,32 @@ TAO::SSLIOP::Server_Invocation_Interceptor::receive_request (
 
   if (TAO_debug_level >= 3)
     ORBSVCS_DEBUG ((LM_DEBUG, "SSLIOP (%P|%t) Interceptor (context), ssl=%d collocated=%d\n", !(no_ssl), this->collocated_));
+
+  // The deny-list is checked on every request too, so a certificate
+  // listed after its connection was made is refused from then on.
+  TAO::SSLIOP::Deny_List *const deny = TAO::SSLIOP::Deny_List::instance ();
+  if (!no_ssl && !this->collocated_ && deny->configured ())
+    {
+      ::SSLIOP::ASN_1_Cert_var der = this->ssliop_current_->get_peer_certificate ();
+      unsigned char const *p = der->get_buffer ();
+      X509 *const peer = der->length () > 0 ? ::d2i_X509 (nullptr, &p, static_cast<long> (der->length ())) : nullptr;
+      std::string const hit = deny->check (peer);
+      if (!hit.empty ())
+        {
+          char subject[256] = "";
+          ::X509_NAME_oneline (::X509_get_subject_name (peer), subject, sizeof subject);
+          CORBA::String_var op = ri->operation ();
+          TAO::Security::Audit_Logger::instance ()->write (
+            TAO::Security::Audit_Record ("authz", false, TAO::Security::Audit_Reason::CERT_DENYLISTED)
+              .field ("subject", subject)
+              .field ("cert_serial", TAO::SSLIOP::Deny_List::serial_of (peer))
+              .field ("denylist_entry", hit)
+              .field ("op", op.in ()));
+          ::X509_free (peer);
+          throw CORBA::NO_PERMISSION ();
+        }
+      ::X509_free (peer);
+    }
 
   // if
   // (1) no SSL session state is available (which means that the

@@ -586,25 +586,21 @@ ACE_SSL_Context::private_key (const char *file_name,
     return this->verify_private_key ();
 }
 
-int
-ACE_SSL_Context::private_key_store (const char *uri)
+EVP_PKEY *
+ACE_SSL_Context::load_store_key (const char *uri,
+                                 pem_password_cb *passwd_cb,
+                                 void *userdata)
 {
-  ACE_TRACE ("ACE_SSL_Context::private_key_store");
-
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
-  // A passphrase or PIN comes from the context's password callback, as
-  // for an encrypted key file.  Without one, use a UI that answers
-  // nothing: OpenSSL's default would prompt on the terminal, which hangs
-  // a service that has none.
-  pem_password_cb *passwd_cb = ::SSL_CTX_get_default_passwd_cb (this->context_);
+  // Without a callback, use a UI that answers nothing: OpenSSL's default
+  // would prompt on the terminal, which hangs a service that has none.
   UI_METHOD *ui_method = passwd_cb != nullptr
     ? ::UI_UTIL_wrap_read_pem_callback (passwd_cb, 0)
     : nullptr;
   OSSL_STORE_CTX *store =
     ::OSSL_STORE_open_ex (uri, nullptr, nullptr,
                           ui_method != nullptr ? ui_method : ::UI_null (),
-                          ::SSL_CTX_get_default_passwd_cb_userdata (this->context_),
-                          nullptr, nullptr, nullptr);
+                          userdata, nullptr, nullptr, nullptr);
 
   EVP_PKEY *pkey = nullptr;
   if (store != nullptr)
@@ -623,7 +619,27 @@ ACE_SSL_Context::private_key_store (const char *uri)
     }
   if (ui_method != nullptr)
     ::UI_destroy_method (ui_method);
+  return pkey;
+#else
+  ACE_UNUSED_ARG (uri);
+  ACE_UNUSED_ARG (passwd_cb);
+  ACE_UNUSED_ARG (userdata);
+  return nullptr;
+#endif /* OPENSSL_VERSION_NUMBER >= 0x30000000L */
+}
 
+int
+ACE_SSL_Context::private_key_store (const char *uri)
+{
+  ACE_TRACE ("ACE_SSL_Context::private_key_store");
+
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+  // A passphrase or PIN comes from the context's password callback, as
+  // for an encrypted key file.
+  EVP_PKEY *pkey =
+    ACE_SSL_Context::load_store_key (uri,
+                                     ::SSL_CTX_get_default_passwd_cb (this->context_),
+                                     ::SSL_CTX_get_default_passwd_cb_userdata (this->context_));
   if (pkey == nullptr)
     {
       // A service cannot run without its key, so say why even without

@@ -380,6 +380,18 @@ public:
   int dh_params_file_type () const;
   //@}
 
+  /**
+   * Loads the private key named by the OpenSSL store URI @a uri (OpenSSL
+   * 3; a PKCS#11 URI, a TPM handle, a provider's key file, or a plain
+   * path).  A PIN or passphrase comes from @a passwd_cb with
+   * @a userdata; without a callback nothing is ever prompted for.
+   * Returns a new reference, or nullptr (reasons on the OpenSSL error
+   * queue).
+   */
+  static EVP_PKEY *load_store_key (const char *uri,
+                                   pem_password_cb *passwd_cb,
+                                   void *userdata);
+
 private:
   /// Verify if the context has been initialized or not.
   void check_context ();

@@ -60,9 +60,16 @@ namespace TAO
         public virtual ::CORBA::LocalObject
     {
     public:
-      /// Constructor
+      /**
+       * Constructor.  With @a keystore ("SL3TLSKeystore"), the key's
+       * filename is an OpenSSL store URI (STORE:<uri>, pkcs11:..., a TPM
+       * handle, se:<file>) and its password the PIN; a key whose private
+       * half can be exported is refused.  Without it ("SL3TLS") the key
+       * is a file, and prod refuses an unencrypted one.
+       */
       CredentialsAcquirer (TAO::SL3::CredentialsCurator_ptr curator,
-                           const CORBA::Any & acquisition_arguments);
+                           const CORBA::Any & acquisition_arguments,
+                           bool keystore = false);
 
       /**
        * @name SecurityLevel3::CredentialsAcquirer Methods
@@ -109,7 +116,10 @@ namespace TAO
                                  STACK_OF (X509) **chain = nullptr);
 
       /// Create an OpenSSL EVP_PKEY key data structure.
-      static ::EVP_PKEY * make_EVP_PKEY (const ::SSLIOP::File &key);
+      ::EVP_PKEY * make_EVP_PKEY (const ::SSLIOP::File &key);
+
+      /// The keystore form of make_EVP_PKEY().
+      static ::EVP_PKEY * make_store_EVP_PKEY (const ::SSLIOP::File &key);
 
     private:
       /// Lock used for synchronization.
@@ -118,8 +128,12 @@ namespace TAO
       /// Reference to the TAO CredentialsCurator implementation.
       TAO::SL3::CredentialsCurator_var curator_;
 
-      /// SSLIOP-specific credentials acquisition arguments.
-      const CORBA::Any & acquisition_arguments_;
+      /// SSLIOP-specific credentials acquisition arguments (a copy: the
+      /// caller's Any need not outlive acquire_credentials()).
+      const CORBA::Any acquisition_arguments_;
+
+      /// Keys come from a keystore (SL3TLSKeystore).
+      bool const keystore_;
 
       /// Has this CredentialsAcquirer object completed credentials
       /// acquisition or been explicitly destroyed?

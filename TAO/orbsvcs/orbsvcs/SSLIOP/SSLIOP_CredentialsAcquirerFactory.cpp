@@ -11,7 +11,8 @@ TAO::SSLIOP::CredentialsAcquirerFactory::make (
   SecurityLevel3::CredentialsAcquirer_ptr ca;
   ACE_NEW_THROW_EX (ca,
                     TAO::SSLIOP::CredentialsAcquirer (curator,
-                                                      acquisition_arguments),
+                                                      acquisition_arguments,
+                                                      this->keystore_),
                     CORBA::NO_MEMORY ());
 
   return ca;

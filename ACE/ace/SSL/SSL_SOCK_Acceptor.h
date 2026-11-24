@@ -25,8 +25,37 @@
 
 #include "ace/SOCK_Acceptor.h"
 #include "ace/OS_QoS.h"
+#include "ace/SString.h"
 
 ACE_BEGIN_VERSIONED_NAMESPACE_DECL
+
+/**
+ * @struct ACE_SSL_Handshake_Failure
+ *
+ * @brief Why a TLS handshake on an accepted connection failed, for
+ *        logging the failure with its peer.
+ */
+struct ACE_SSL_Export ACE_SSL_Handshake_Failure
+{
+  enum Kind
+  {
+    NONE,          ///< No handshake failure (or the TCP accept failed)
+    VERIFY,        ///< The peer's certificate did not verify
+    NO_PEER_CERT,  ///< The peer sent no certificate but one is required
+    TLS,           ///< Another TLS error (protocol, alert, not TLS at all)
+    TIMEOUT,       ///< The handshake did not finish in time
+    CLOSED         ///< The peer closed the connection during the handshake
+  };
+
+  Kind kind = NONE;
+  /// X509_V_* result of verifying the peer (VERIFY).
+  long verify_result = 0;
+  /// Human-readable reason (OpenSSL's text for VERIFY and TLS).
+  ACE_CString detail;
+  /// The peer certificate's subject and serial (hex), if it sent one.
+  ACE_CString peer_subject;
+  ACE_CString peer_serial;
+};
 
 /**
  * @class ACE_SSL_SOCK_Acceptor
@@ -156,6 +185,19 @@ public:
    *
    * @return 0 if success; -1 for failure (errno contains error code).
    */
+  /**
+   * As accept() above; when the TCP connection was accepted but the TLS
+   * handshake failed, @a failure says why (and @a remote_addr still
+   * holds the peer's address).  @a failure.kind stays NONE when the TCP
+   * accept itself failed.
+   */
+  int accept (ACE_SSL_SOCK_Stream &new_stream,
+              ACE_Addr *remote_addr,
+              ACE_Time_Value *timeout,
+              bool restart,
+              bool reset_new_handle,
+              ACE_SSL_Handshake_Failure &failure) const;
+
   int accept (ACE_SSL_SOCK_Stream &new_stream,
               ACE_Accept_QoS_Params qos_params,
               ACE_Addr *remote_addr = nullptr,
@@ -176,7 +218,8 @@ public:
 protected:
   /// Complete SSL passive connection establishment.
   int ssl_accept (ACE_SSL_SOCK_Stream &new_stream,
-                  ACE_Time_Value *timeout) const;
+                  ACE_Time_Value *timeout,
+                  ACE_SSL_Handshake_Failure *failure = nullptr) const;
 
 private:
   /// The BSD-socket workhorse

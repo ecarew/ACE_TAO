@@ -1,8 +1,74 @@
 #include "orbsvcs/SSLIOP/SSLIOP_Accept_Strategy.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Deny_List.h"
+#include "orbsvcs/Security/Audit_Logger.h"
+#include "orbsvcs/Security/Self_Check.h"
 #include "orbsvcs/Log_Macros.h"
+#include "tao/Security_Mode.h"
 #include "tao/debug.h"
 
+#include "ace/INET_Addr.h"
+
+#include <openssl/ssl.h>
+#include <openssl/x509.h>
+
 TAO_BEGIN_VERSIONED_NAMESPACE_DECL
+
+namespace
+{
+  using TAO::Security::Audit_Logger;
+  using TAO::Security::Audit_Record;
+  namespace Reason = TAO::Security::Audit_Reason;
+
+  /// Connection decisions are audited where the host has a security
+  /// mode that runs checks (test and prod).
+  bool
+  auditing ()
+  {
+    TAO_Security_Mode::Mode const m = TAO_Security_Mode::host ().mode;
+    return m == TAO_Security_Mode::MODE_TEST || m == TAO_Security_Mode::MODE_PROD;
+  }
+
+  std::string
+  address (ACE_INET_Addr const &a)
+  {
+    char buf[INET6_ADDRSTRLEN + 8] = "";
+    if (a.addr_to_string (buf, sizeof buf, 1) != 0)
+      return "?";
+    return buf;
+  }
+
+  std::string
+  host_of (ACE_INET_Addr const &a)
+  {
+    char buf[INET6_ADDRSTRLEN] = "";
+    return a.get_host_addr (buf, sizeof buf) != nullptr ? buf : "?";
+  }
+
+  /// Drops a connection accepted at the TLS level but refused by policy.
+  /// The handler was never activated, so (as for a failed accept) close
+  /// its stream and release the transport; close() would leave the
+  /// socket open and the peer waiting.
+  void
+  refuse (TAO::SSLIOP::Connection_Handler *svc_handler)
+  {
+    svc_handler->peer ().close ();
+    svc_handler->transport ()->remove_reference ();
+  }
+
+  char const *
+  failure_reason (ACE_SSL_Handshake_Failure const &f)
+  {
+    switch (f.kind)
+      {
+      case ACE_SSL_Handshake_Failure::VERIFY:
+        return f.verify_result == X509_V_ERR_CERT_HAS_EXPIRED ? Reason::CERT_EXPIRED : Reason::CERT_UNTRUSTED;
+      case ACE_SSL_Handshake_Failure::NO_PEER_CERT:
+        return Reason::NO_CLIENT_CERT;
+      default:
+        return Reason::TLS_HANDSHAKE_FAILED;
+      }
+  }
+}
 
 TAO::SSLIOP::Accept_Strategy::Accept_Strategy (TAO_ORB_Core * orb_core,
                                                const ACE_Time_Value & timeout,
@@ -41,22 +107,73 @@ TAO::SSLIOP::Accept_Strategy::accept_svc_handler (handler_type * svc_handler)
   // associations.
   int const reset_new_handle = this->reactor_->uses_event_associations ();
 
+  ACE_INET_Addr peer_addr;
+  ACE_SSL_Handshake_Failure failure;
   if (this->peer_acceptor_.accept (svc_handler->peer (), // stream
-                                   0,                // remote address
+                                   &peer_addr,       // remote address
                                    &timeout,         // timeout
                                    1,                // restart
-                                   reset_new_handle  // reset new handler
-                                   ) == -1)
+                                   reset_new_handle, // reset new handler
+                                   failure) == -1)
     {
       // Ensure that errno is preserved in case the svc_handler
       // close() method resets it.
       ACE_Errno_Guard error (errno);
+
+      // Every failed handshake is a security event: who, and why.
+      if (failure.kind != ACE_SSL_Handshake_Failure::NONE && auditing ())
+        {
+          Audit_Record r ("authn", false, failure_reason (failure));
+          r.field ("src", host_of (peer_addr)).field ("peer", address (peer_addr));
+          if (failure.peer_subject.length () > 0)
+            r.field ("subject", failure.peer_subject.c_str ());
+          if (failure.peer_serial.length () > 0)
+            r.field ("cert_serial", failure.peer_serial.c_str ());
+          r.text (failure.detail.c_str ());
+          Audit_Logger::instance ()->write (r);
+        }
 
       // It doesn't make sense to close the handler since it didn't open.
       svc_handler->transport ()->remove_reference ();
 
       // #REFCOUNT# is zero at this point.
       return -1;
+    }
+
+  // While the security state is degraded (prod, audit sink down) no new
+  // connection is accepted; requests on existing ones get TRANSIENT.
+  if (TAO::Security::Self_Check::degraded ())
+    {
+      Audit_Logger::instance ()->write (
+        Audit_Record ("authn", false, Reason::CONNECTION_REFUSED)
+          .field ("src", host_of (peer_addr)).field ("peer", address (peer_addr))
+          .text ("security state degraded"));
+      refuse (svc_handler);
+      return -1;
+    }
+
+  // A certificate on the deny-list is refused at the handshake.
+  TAO::SSLIOP::Deny_List *const deny = TAO::SSLIOP::Deny_List::instance ();
+  if (deny->configured ())
+    {
+      X509 *const peer = ::SSL_get_peer_certificate (svc_handler->peer ().ssl ());
+      std::string const hit = deny->check (peer);
+      if (!hit.empty ())
+        {
+          char subject[256] = "";
+          ::X509_NAME_oneline (::X509_get_subject_name (peer), subject, sizeof subject);
+          Audit_Logger::instance ()->write (
+            Audit_Record ("authn", false, Reason::CERT_DENYLISTED)
+              .field ("src", host_of (peer_addr)).field ("peer", address (peer_addr))
+              .field ("subject", subject)
+              .field ("cert_serial", TAO::SSLIOP::Deny_List::serial_of (peer))
+              .field ("denylist_entry", hit)
+              .field ("denylist_version", std::to_string (deny->version ())));
+          ::X509_free (peer);
+          refuse (svc_handler);
+          return -1;
+        }
+      ::X509_free (peer);
     }
 
   // If required, verify the host in the endpoint match the cert

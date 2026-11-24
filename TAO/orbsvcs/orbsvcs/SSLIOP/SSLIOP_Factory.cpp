@@ -4,6 +4,7 @@
 #include "orbsvcs/SSLIOP/SSLIOP_Connector.h"
 #include "orbsvcs/SSLIOP/SSLIOP_ORBInitializer.h"
 #include "orbsvcs/Security/Self_Check.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Deny_List.h"
 #include "tao/Security_Mode.h"
 #include "ace/OS_NS_strings.h"
 #include "ace/Read_Buffer.h"
@@ -260,6 +261,35 @@ namespace
     if (no_protection)
       Self_Check::contribute ("ssliop_protection", bad,
                               "-SSLNoProtection accepts unprotected invocations");
+
+    if (host.mode == TAO_Security_Mode::MODE_PROD)
+      Self_Check::contribute ("ssliop_listener", Self_Check::CHECK_OK,
+                              "no plain IIOP listener; TLS only (IIOP port 0 in references)");
+
+    // Deny-list: refused certificates, checked at the handshake and on
+    // each request.  Missing warns; configured but unusable is bad.
+    {
+      TAO::SSLIOP::Deny_List *const deny = TAO::SSLIOP::Deny_List::instance ();
+      std::string summary;
+      if (!deny->configured ())
+        Self_Check::contribute ("denylist", Self_Check::CHECK_WARN,
+                                "no deny-list configured (denylist); revocation relies on expiry alone");
+      else if (host.mode == TAO_Security_Mode::MODE_PROD && host.get ("denylist_signer_sha256").empty ())
+        Self_Check::contribute ("denylist", bad, "denylist_signer_sha256 is not set: the signer is not pinned");
+      else if (!deny->load (summary))
+        Self_Check::contribute ("denylist", bad, ("deny-list unusable: " + summary).c_str ());
+      else
+        {
+          long const age = deny->age_days ();
+          Self_Check::banner_field ("deny", ("v" + std::to_string (deny->version ())).c_str ());
+          if (age > deny->max_age_days ())
+            Self_Check::contribute ("denylist", Self_Check::CHECK_WARN,
+                                    (summary + "; issued " + std::to_string (age) + " day(s) ago (denylist_max_age "
+                                     + std::to_string (deny->max_age_days ()) + ")").c_str ());
+          else
+            Self_Check::contribute ("denylist", Self_Check::CHECK_OK, summary.c_str ());
+        }
+    }
 
     // Trust anchors: the CA file must hold exactly the configured roots,
     // so a lab or test CA cannot slip into a production trust store.

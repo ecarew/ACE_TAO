@@ -55,7 +55,21 @@ namespace TAO
 
     int close () override;
 
+    /**
+     * When false, open() listens on no plain IIOP port: the profile
+     * advertises IIOP port 0 and only the SSL port (from the SSLIOP
+     * tagged component) accepts connections.  SSLIOP clients that
+     * require protection never use the IIOP port.  Prod sets this.
+     */
+    void plain_listener (bool enable) { this->plain_listener_ = enable; }
+    bool plain_listener () const { return this->plain_listener_; }
+
+  protected:
+    int open_i (const ACE_INET_Addr &addr, ACE_Reactor *reactor) override;
+
   private:
+    bool plain_listener_ {true};
+
     /// The concrete acceptor, as a pointer to it's base class.
     TAO_IIOP_SSL_BASE_ACCEPTOR base_acceptor_;
 

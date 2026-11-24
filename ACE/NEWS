@@ -1,6 +1,17 @@
 USER VISIBLE CHANGES BETWEEN ACE-8.0.8 and ACE-8.0.9
 ====================================================
 
+. ACE_SSL_SOCK_Acceptor::accept() has an overload that reports why a TLS
+  handshake failed in an ACE_SSL_Handshake_Failure: the kind (certificate
+  verification, no peer certificate, other TLS error, timeout, peer closed),
+  the X.509 verify result, the OpenSSL error text, and the peer certificate's
+  subject and serial when OpenSSL still holds them. It is captured before
+  the error queue is reported and cleared.
+
+. New ACE_SSL_Context::load_store_key() loads a private key from an
+  OpenSSL 3 store URI with an optional password callback; it is what
+  private_key() uses for FILETYPE_STORE, now available to other callers.
+
 . ACE_SSL_SOCK_Stream::close() now always closes the socket. On a
   non-blocking stream whose peer had stopped reading, SSL_shutdown() could
   not send its close_notify, and close() returned -1 with EWOULDBLOCK while

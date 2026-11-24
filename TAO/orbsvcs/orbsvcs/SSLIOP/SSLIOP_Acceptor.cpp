@@ -8,6 +8,7 @@
 #include "tao/Codeset_Manager.h"
 #include "tao/CDR.h"
 #include "tao/debug.h"
+#include "tao/Security_Mode.h"
 
 #if !defined(__ACE_INLINE__)
 #include "orbsvcs/SSLIOP/SSLIOP_Acceptor.inl"
@@ -25,6 +26,9 @@ TAO::SSLIOP::Acceptor::Acceptor (::Security::QOP qop,
     timeout_ (timeout),
     check_host_ (check_host)
 {
+  // Prod listens only for TLS: no plain IIOP port at all.
+  this->plain_listener (TAO_Security_Mode::host ().mode != TAO_Security_Mode::MODE_PROD);
+
   // --- CSIv1 ---
 
   // Clear all bits in the SSLIOP::SSL association option fields.
@@ -341,8 +345,12 @@ TAO::SSLIOP::Acceptor::is_collocated (const TAO_Endpoint *endpoint)
 
   for (size_t i = 0; i < this->endpoint_count_; ++i)
     {
-      if (iiop->port () == this->addrs_[i].get_port_number ()
-          && ACE_OS::strcmp (iiop->host (), this->hosts_[i]) == 0)
+      // Without a plain listener every IIOP port is 0, so the SSL port
+      // tells this acceptor's endpoints apart.
+      bool const same_port = this->addrs_[i].get_port_number () != 0
+        ? iiop->port () == this->addrs_[i].get_port_number ()
+        : endp->ssl_component ().port == this->ssl_component_.port;
+      if (same_port && ACE_OS::strcmp (iiop->host (), this->hosts_[i]) == 0)
         return 1;
     }
 

@@ -1,0 +1,5 @@
+interface Ping
+{
+  void hello ();
+  oneway void shutdown ();
+};

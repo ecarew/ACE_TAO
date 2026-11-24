@@ -43,10 +43,16 @@ namespace TAO
       : public virtual TAO::SL3::CredentialsAcquirerFactory
     {
     public:
+      /// @a keystore: make SL3TLSKeystore acquirers (keys by store URI).
+      explicit CredentialsAcquirerFactory (bool keystore = false) : keystore_ (keystore) {}
+
       /// Create a TAO::SSLIOP::CredentialsAcquirerFactory.
       SecurityLevel3::CredentialsAcquirer_ptr make (
         TAO::SL3::CredentialsCurator_ptr curator,
         const CORBA::Any & acquisition_arguments) override;
+
+    private:
+      bool const keystore_;
     };
   } // End SSLIOP namespace
 }  // End TAO namespace

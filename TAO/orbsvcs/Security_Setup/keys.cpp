@@ -1285,6 +1285,24 @@ namespace
   }
 }
 
+bool
+setup_read_password (std::string const &path, std::string &out, std::string &error)
+{
+  return read_password (path, out, error);
+}
+
+EVP_PKEY *
+setup_load_key (std::string const &spec, std::string const &password, std::string &error)
+{
+  return load_key (spec, password, error).release ();
+}
+
+bool
+setup_write_atomic (std::string const &path, std::string const &text, unsigned mode, std::string &error)
+{
+  return write_atomic (path, text, static_cast<mode_t> (mode), error);
+}
+
 int
 setup_key (int argc, ACE_TCHAR *argv[])
 {

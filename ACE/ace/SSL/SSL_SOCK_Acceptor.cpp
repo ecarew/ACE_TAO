@@ -10,6 +10,9 @@
 #include "ace/Countdown_Time.h"
 #include "ace/Truncate.h"
 
+#include <openssl/err.h>
+#include <openssl/x509.h>
+
 #if !defined (__ACE_INLINE__)
 #include "SSL_SOCK_Acceptor.inl"
 #endif /* __ACE_INLINE__ */
@@ -18,6 +21,51 @@ ACE_BEGIN_VERSIONED_NAMESPACE_DECL
 
 ACE_ALLOC_HOOK_DEFINE(ACE_SSL_SOCK_Acceptor)
 
+namespace
+{
+  /// Fills in @a f from the failed handshake on @a ssl, before the
+  /// OpenSSL error queue is emptied.
+  void
+  describe_failure (SSL *ssl, ACE_SSL_Handshake_Failure &f)
+  {
+    long const v = ::SSL_get_verify_result (ssl);
+    unsigned long const e = ::ERR_peek_last_error ();
+    if (v != X509_V_OK)
+      {
+        f.kind = ACE_SSL_Handshake_Failure::VERIFY;
+        f.verify_result = v;
+        f.detail = ::X509_verify_cert_error_string (v);
+      }
+    else if (e != 0 && ERR_GET_LIB (e) == ERR_LIB_SSL
+             && ERR_GET_REASON (e) == SSL_R_PEER_DID_NOT_RETURN_A_CERTIFICATE)
+      {
+        f.kind = ACE_SSL_Handshake_Failure::NO_PEER_CERT;
+        f.detail = "peer did not return a certificate";
+      }
+    else
+      {
+        f.kind = ACE_SSL_Handshake_Failure::TLS;
+        char const *const r = e != 0 ? ::ERR_reason_error_string (e) : nullptr;
+        f.detail = r != nullptr ? r : "TLS handshake failed";
+      }
+
+    X509 *const peer = ::SSL_get_peer_certificate (ssl);
+    if (peer != nullptr)
+      {
+        char buf[256];
+        ::X509_NAME_oneline (::X509_get_subject_name (peer), buf, sizeof buf);
+        f.peer_subject = buf;
+        BIGNUM *const bn = ::ASN1_INTEGER_to_BN (::X509_get0_serialNumber (peer), nullptr);
+        char *const hex = bn != nullptr ? ::BN_bn2hex (bn) : nullptr;
+        if (hex != nullptr)
+          f.peer_serial = hex;
+        ::OPENSSL_free (hex);
+        ::BN_free (bn);
+        ::X509_free (peer);
+      }
+  }
+}
+
 ACE_SSL_SOCK_Acceptor::~ACE_SSL_SOCK_Acceptor ()
 {
   ACE_TRACE ("ACE_SSL_SOCK_Acceptor::~ACE_SSL_SOCK_Acceptor");
@@ -25,7 +73,8 @@ ACE_SSL_SOCK_Acceptor::~ACE_SSL_SOCK_Acceptor ()
 
 int
 ACE_SSL_SOCK_Acceptor::ssl_accept (ACE_SSL_SOCK_Stream &new_stream,
-                                   ACE_Time_Value *timeout) const
+                                   ACE_Time_Value *timeout,
+                                   ACE_SSL_Handshake_Failure *failure) const
 {
   SSL *ssl = new_stream.ssl ();
 
@@ -90,6 +139,11 @@ ACE_SSL_SOCK_Acceptor::ssl_accept (ACE_SSL_SOCK_Stream &new_stream,
           // The peer has notified us that it is shutting down via
           // the SSL "close_notify" message so we need to
           // shutdown, too.
+          if (failure != nullptr)
+            {
+              failure->kind = ACE_SSL_Handshake_Failure::CLOSED;
+              failure->detail = "peer closed the connection during the handshake";
+            }
           status = -1;
           break;
 
@@ -118,9 +172,24 @@ ACE_SSL_SOCK_Acceptor::ssl_accept (ACE_SSL_SOCK_Stream &new_stream,
             }
           else
             status = -1;
+          if (status == -1 && failure != nullptr)
+            {
+              // A TLS failure can also surface this way (the peer sent
+              // an alert and closed); otherwise the peer just went away.
+              if (::ERR_peek_last_error () != 0
+                  || ::SSL_get_verify_result (ssl) != X509_V_OK)
+                describe_failure (ssl, *failure);
+              else
+                {
+                  failure->kind = ACE_SSL_Handshake_Failure::CLOSED;
+                  failure->detail = "peer closed the connection during the handshake";
+                }
+            }
           break;
 
         default:
+          if (failure != nullptr)
+            describe_failure (ssl, *failure);
           ACE_SSL_Context::report_error ();
           status = -1;
           break;
@@ -149,7 +218,16 @@ ACE_SSL_SOCK_Acceptor::ssl_accept (ACE_SSL_SOCK_Stream &new_stream,
           if (status >= 1)
             status = 1;
           else                   // Timeout or failure
-            status = -1;
+            {
+              if (failure != nullptr)
+                {
+                  failure->kind = status == 0 ? ACE_SSL_Handshake_Failure::TIMEOUT
+                                              : ACE_SSL_Handshake_Failure::CLOSED;
+                  failure->detail = status == 0 ? "the handshake did not finish in time"
+                                                : "waiting for the handshake failed";
+                }
+              status = -1;
+            }
         }
 
     } while (status == 1 && !SSL_is_init_finished (ssl));
@@ -195,6 +273,47 @@ ACE_SSL_SOCK_Acceptor::accept (ACE_SSL_SOCK_Stream &new_stream,
 
   if (this->ssl_accept (new_stream, timeout) == -1)
     {
+      new_stream.close ();
+      new_stream.set_handle (ACE_INVALID_HANDLE);
+      return -1;
+    }
+
+  return 0;
+}
+
+int
+ACE_SSL_SOCK_Acceptor::accept (ACE_SSL_SOCK_Stream &new_stream,
+                               ACE_Addr *remote_addr,
+                               ACE_Time_Value *timeout,
+                               bool restart,
+                               bool reset_new_handle,
+                               ACE_SSL_Handshake_Failure &failure) const
+{
+  ACE_TRACE ("ACE_SSL_SOCK_Acceptor::accept");
+
+  failure = ACE_SSL_Handshake_Failure ();
+  ACE_Countdown_Time countdown (timeout);
+
+  ACE_SOCK_Stream temp_stream;
+  if (-1 == this->acceptor_.accept (temp_stream,
+                                    remote_addr,
+                                    timeout,
+                                    restart,
+                                    reset_new_handle))
+    return -1;
+
+  (void) countdown.update ();
+
+  new_stream.set_handle (temp_stream.get_handle ());
+  temp_stream.set_handle (ACE_INVALID_HANDLE);
+
+  if (this->ssl_accept (new_stream, timeout, &failure) == -1)
+    {
+      if (failure.kind == ACE_SSL_Handshake_Failure::NONE)
+        {
+          failure.kind = ACE_SSL_Handshake_Failure::TLS;
+          failure.detail = "TLS handshake failed";
+        }
       new_stream.close ();
       new_stream.set_handle (ACE_INVALID_HANDLE);
       return -1;

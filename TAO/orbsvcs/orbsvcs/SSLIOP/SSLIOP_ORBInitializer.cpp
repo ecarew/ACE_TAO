@@ -175,6 +175,14 @@ TAO::SSLIOP::ORBInitializer::post_init (
 
   (void) safe_factory.release ();  // CredentialsCurator now owns
                                    // CredentialsAcquirerFactory.
+
+  // Keys held in a keystore (PKCS#11 token, TPM, Secure Enclave), named
+  // by an OpenSSL store URI in the AuthData key filename.
+  TAO::SSLIOP::CredentialsAcquirerFactory *keystore_factory = nullptr;
+  ACE_NEW_THROW_EX (keystore_factory,
+                    TAO::SSLIOP::CredentialsAcquirerFactory (true),
+                    CORBA::NO_MEMORY ());
+  tao_curator->register_acquirer_factory ("SL3TLSKeystore", keystore_factory);
 }
 
 size_t

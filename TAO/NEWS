@@ -1,6 +1,33 @@
 USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
 ====================================================
 
+. SSLIOP transport hardening. In prod an SSLIOP service opens no plain
+  IIOP listener: its references advertise IIOP port 0 and only the SSL
+  port accepts connections. Every failed TLS handshake is an audit record
+  with the peer's address and why it failed (NO_CLIENT_CERT,
+  CERT_UNTRUSTED, CERT_EXPIRED, TLS_HANDSHAKE_FAILED). While the security
+  state is degraded, new connections are refused (CONNECTION_REFUSED).
+
+. SSLIOP checks a signed deny-list of certificate serial numbers and SPIFFE
+  IDs (security.conf: denylist, denylist_signer, denylist_signer_sha256,
+  denylist_reload, denylist_max_age). A listed certificate is refused at
+  the handshake, and a request on an existing connection gets
+  NO_PERMISSION once its identity is listed (CERT_DENYLISTED). The list is
+  re-read when it changes; a list whose signature does not verify, or
+  whose version is not newer, is refused and the last good one kept
+  (DENYLIST_REJECTED). Prod requires the signer to be pinned by its
+  SPKI SHA-256. The startup self-check reports the list's version and
+  age. ace-tao-setup denylist add|remove|sign|check|pin maintains the list
+  (DENYLIST_SIGNED).
+
+. New SecurityLevel3 acquisition method "SL3TLSKeystore": credentials whose
+  private key stays in a keystore (PKCS#11 token, TPM, Secure Enclave),
+  named by an OpenSSL store URI, with the password used as the PIN. A
+  software key that could be exported is refused. In prod, "SL3TLS" refuses
+  an unencrypted PEM key.
+
+. New test orbsvcs/tests/Security/Transport.
+
 . ace-tao-setup makes service keys and gets their certificates. "key create"
   generates a key where it will stay: in a PKCS#11 token (pkcs11-provider),
   a TPM (tpm2-openssl, as a TPM-wrapped blob), the macOS Secure Enclave (the

@@ -6,6 +6,9 @@
 #include "tao/ORB_Constants.h"
 
 #include "ace/SSL/SSL_Context.h"
+#include "tao/Security_Mode.h"
+#include <openssl/core_names.h>
+#include <string>
 
 #include "ace/OS_NS_stdio.h"
 
@@ -71,10 +74,12 @@ TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 
 TAO::SSLIOP::CredentialsAcquirer::CredentialsAcquirer (
    TAO::SL3::CredentialsCurator_ptr curator,
-   const CORBA::Any & acquisition_arguments)
+   const CORBA::Any & acquisition_arguments,
+   bool keystore)
   : lock_ (),
     curator_ (TAO::SL3::CredentialsCurator::_duplicate (curator)),
     acquisition_arguments_ (acquisition_arguments),
+    keystore_ (keystore),
     destroyed_ (false)
 {
 }
@@ -88,7 +93,7 @@ TAO::SSLIOP::CredentialsAcquirer::acquisition_method ()
 {
   this->check_validity ();
 
-  return CORBA::string_dup ("SL3TLS");
+  return CORBA::string_dup (this->keystore_ ? "SL3TLSKeystore" : "SL3TLS");
 }
 
 SecurityLevel3::AcquisitionStatus
@@ -304,8 +309,85 @@ TAO::SSLIOP::CredentialsAcquirer::make_X509 (const ::SSLIOP::File &certificate,
 }
 
 ::EVP_PKEY *
+TAO::SSLIOP::CredentialsAcquirer::make_store_EVP_PKEY (const ::SSLIOP::File &key)
+{
+  const char *name = key.filename.in ();
+  if (name == nullptr || *name == '\0')
+    return nullptr;
+  if (ACE_OS::strncmp (name, "STORE:", 6) == 0)
+    name += 6;
+
+  const char *pin = key.password.in ();
+  bool const have_pin = pin != nullptr && *pin != '\0';
+  ::EVP_PKEY *evp =
+    ACE_SSL_Context::load_store_key (name,
+                                     have_pin ? TAO_SSLIOP_PASSWORD_CALLBACK_NAME : nullptr,
+                                     have_pin ? const_cast<char *> (pin) : nullptr);
+  if (evp == nullptr)
+    {
+      ACE_SSL_Context::report_error ();
+      ORBSVCS_ERROR ((LM_ERROR,
+                      ACE_TEXT ("(%P|%t) SSLIOP::CredentialsAcquirer (SL3TLSKeystore) - ")
+                      ACE_TEXT ("no private key loaded from <%C> (PIN, object name, OPENSSL_CONF?)\n"),
+                      name));
+      return nullptr;
+    }
+
+  // A keystore key never leaves its store: refuse one whose private half
+  // its provider would hand out (a software key read from a file).
+  OSSL_PARAM *params = nullptr;
+  bool exportable = false;
+  if (::EVP_PKEY_todata (evp, EVP_PKEY_KEYPAIR, &params) == 1)
+    {
+      exportable = ::OSSL_PARAM_locate (params, OSSL_PKEY_PARAM_PRIV_KEY) != nullptr
+                   || ::OSSL_PARAM_locate (params, OSSL_PKEY_PARAM_RSA_D) != nullptr;
+      ::OSSL_PARAM_free (params);
+    }
+  ERR_clear_error ();
+  if (exportable)
+    {
+      ORBSVCS_ERROR ((LM_ERROR,
+                      ACE_TEXT ("(%P|%t) SSLIOP::CredentialsAcquirer (SL3TLSKeystore) - ")
+                      ACE_TEXT ("<%C> is a software key that can be exported; ")
+                      ACE_TEXT ("use a token, TPM or Secure Enclave key, or SL3TLS for files\n"),
+                      name));
+      ::EVP_PKEY_free (evp);
+      return nullptr;
+    }
+  return evp;
+}
+
+::EVP_PKEY *
 TAO::SSLIOP::CredentialsAcquirer::make_EVP_PKEY (const ::SSLIOP::File &key)
 {
+  if (this->keystore_)
+    return make_store_EVP_PKEY (key);
+
+  // Prod refuses an unprotected key file here as it does for
+  // -SSLPrivateKey: only a passphrase-encrypted PEM file is accepted.
+  if (TAO_Security_Mode::host ().mode == TAO_Security_Mode::MODE_PROD && key.filename.in () != nullptr)
+    {
+      bool encrypted = false;
+      if (key.type != ::SSLIOP::ASN1)
+        {
+          FILE *const kf = ACE_OS::fopen (key.filename.in (), "r");
+          if (kf != nullptr)
+            {
+              char line[256];
+              while (!encrypted && ACE_OS::fgets (line, sizeof line, kf) != nullptr)
+                encrypted = ACE_OS::strstr (line, "ENCRYPTED") != nullptr;
+              (void) ACE_OS::fclose (kf);
+            }
+        }
+      if (!encrypted)
+        {
+          ORBSVCS_ERROR ((LM_ERROR,
+                          ACE_TEXT ("(%P|%t) SSLIOP::CredentialsAcquirer (SL3TLS) - prod refuses the ")
+                          ACE_TEXT ("unprotected key file <%C>; use an encrypted file or SL3TLSKeystore\n"),
+                          key.filename.in ()));
+          return nullptr;
+        }
+    }
   // No password is used or needed when reading ASN.1 encoded
   // private keys.
 
