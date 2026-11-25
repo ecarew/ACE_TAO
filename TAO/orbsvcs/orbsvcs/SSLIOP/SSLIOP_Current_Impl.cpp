@@ -6,9 +6,14 @@
 
 #include "orbsvcs/SSLIOP/SSLIOP_X509.h"
 #include "orbsvcs/SSLIOP/SSLIOP_ClientCredentials.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Deny_List.h"
 
 #include "tao/ORB_Constants.h"
 
+#include "ace/INET_Addr.h"
+#include "ace/SOCK_Stream.h"
+
+#include <openssl/bio.h>
 #include <openssl/x509.h>
 
 TAO_BEGIN_VERSIONED_NAMESPACE_DECL
@@ -32,7 +37,8 @@ TAO::SSLIOP::Current_Impl::client_credentials ()
   ACE_NEW_THROW_EX (creds,
                     TAO::SSLIOP::ClientCredentials (cert.in (),
                                                     nullptr,
-                                                    this->ssl_),
+                                                    this->ssl_,
+                                                    this->caller_),
                     CORBA::NO_MEMORY (
                       CORBA::SystemException::_tao_minor_code (
                         TAO::VMCID,
@@ -40,6 +46,77 @@ TAO::SSLIOP::Current_Impl::client_credentials ()
                       CORBA::COMPLETED_NO));
 
   return creds;
+}
+
+namespace
+{
+  std::string
+  rfc2253 (X509_NAME *name)
+  {
+    if (name == nullptr)
+      return "";
+    BIO *const b = ::BIO_new (::BIO_s_mem ());
+    if (b == nullptr)
+      return "";
+    ::X509_NAME_print_ex (b, name, 0, XN_FLAG_RFC2253);
+    char *data = nullptr;
+    long const n = BIO_get_mem_data (b, &data);
+    std::string const out = n > 0 ? std::string (data, static_cast<size_t> (n)) : std::string ();
+    ::BIO_free (b);
+    return out;
+  }
+}
+
+TAO::Security::Caller
+TAO::SSLIOP::Current_Impl::make_caller () const
+{
+  TAO::Security::Caller c;
+  if (this->ssl_ == nullptr)
+    return c;
+
+#if (OPENSSL_VERSION_NUMBER >= 0x30000000L)
+  TAO::SSLIOP::X509_var cert = ::SSL_get1_peer_certificate (this->ssl_);
+#else
+  TAO::SSLIOP::X509_var cert = ::SSL_get_peer_certificate (this->ssl_);
+#endif
+  if (cert.ptr () != nullptr)
+    {
+      for (auto const &id : TAO::SSLIOP::Deny_List::spiffe_ids_of (cert.in ()))
+        c.spiffe_ids.push_back (id);
+      c.subject = rfc2253 (::X509_get_subject_name (cert.in ()));
+      c.issuer = rfc2253 (::X509_get_issuer_name (cert.in ()));
+      c.serial = TAO::SSLIOP::Deny_List::serial_of (cert.in ());
+    }
+
+  int const fd = ::SSL_get_fd (this->ssl_);
+  if (fd >= 0)
+    {
+      ACE_SOCK_Stream peer;
+      peer.set_handle (static_cast<ACE_HANDLE> (fd));
+      ACE_INET_Addr addr;
+      if (peer.get_remote_addr (addr) == 0)
+        {
+          char host[INET6_ADDRSTRLEN + 1] = "";
+          addr.get_host_addr (host, sizeof host);
+          std::string const h = host;
+          c.source = (h.find (':') != std::string::npos ? "[" + h + "]" : h) + ":"
+                     + std::to_string (addr.get_port_number ());
+        }
+      peer.set_handle (ACE_INVALID_HANDLE);   // not ours to close
+    }
+  return c;
+}
+
+void
+TAO::SSLIOP::Current_Impl::caller (std::shared_ptr<TAO::Security::Caller const> c)
+{
+  this->caller_ = std::move (c);
+}
+
+std::shared_ptr<TAO::Security::Caller const>
+TAO::SSLIOP::Current_Impl::caller () const
+{
+  return this->caller_;
 }
 
 CORBA::Boolean

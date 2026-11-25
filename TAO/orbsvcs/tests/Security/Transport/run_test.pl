@@ -48,13 +48,20 @@ my $fp = `openssl x509 -in $dir/ca.pem -noout -fingerprint -sha256`;
 $fp =~ s/.*=//; chomp $fp;
 my ($pin) = `$tool --conf /dev/null denylist pin --signer $dir/signer_pub.pem` =~ /= (\w+)/;
 my $deny = "$work/deny.list";
+my $acl = "$work/access.list";
 my $conf_base = "mode = " . ($prod ? "prod" : "test") . "\naudit_sink = stderr\ntime_sync_wait = 0\n"
               . "trust_anchor_sha256 = $fp\ndenylist = $deny\ndenylist_signer = $dir/signer_pub.pem\n"
-              . "denylist_reload = 1\n";
+              . "denylist_reload = 1\naccess_list = $acl\n";
 my $conf = "$work/security.conf";
 spit ($conf, $conf_base . "denylist_signer_sha256 = $pin\n");
 chmod (0600, $conf);
 my $sign = "--key PEM:$dir/signer_key_enc.pem --password-file $dir/password.txt";
+
+# Prod refuses requests no access rule covers: this test is about the
+# transport, so every identified caller may call (see ../Caller).
+spit ($acl, "version 0\nissued 2026-01-01T00:00:00Z\nallow * *\n");
+my $acl_out = `$tool --conf $conf access sign $sign --bump 2>&1`;
+die "access sign failed:\n$acl_out" unless $acl_out =~ /signed into/;
 
 sub svc {
     my ($name, $cert, $key) = @_;
@@ -105,7 +112,7 @@ if ($pid == 0) {
 }
 for (my $i = 0; $i < 100 && !-s $ior; ++$i) { select (undef, undef, undef, 0.1); }
 expect ('server starts with the deny-list loaded', slurp ($log),
-        ['SERVER READY', 'deny=v1', 'checks: \d+ ok, \d+ warn, 0 fail']);
+        ['SERVER READY', 'deny=v1', 'acl=v1', 'checks: \d+ ok, \d+ warn, 0 fail']);
 expect ('prod opens no plain IIOP listener (IIOP port 0)', slurp ($log), ['PORTS iiop=0 ssl=[1-9]']) if $prod;
 
 sub client { my ($conf, $args) = @_; my $o = `$dir/client -ORBSvcConf $work/$conf.conf -k file://$ior $args 2>&1`; return $o; }

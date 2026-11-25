@@ -123,6 +123,18 @@ print $fh "dynamic SSLIOP_Factory Service_Object * TAO_SSLIOP:_make_TAO_SSLIOP_P
         . "-SSLPrivateKey PEM:$certs/server_key_enc.pem -SSLPassword file:$certs/password.txt\"\n"
         . "static Resource_Factory \"-ORBProtocolFactory SSLIOP_Factory\"\n";
 close ($fh);
+# Prod needs a signed access list before an SSLIOP service starts.
+{
+    my $signer = "$dir/../Transport";
+    my $acl = "$work/access.list";
+    open (my $a, '>', $acl); print $a "version 0\nissued 2026-01-01T00:00:00Z\nallow * *\n"; close ($a);
+    my $o = `$tool --conf /dev/null access sign --key PEM:$signer/signer_key_enc.pem --password-file $signer/password.txt --file $acl --bump 2>&1`;
+    die "access sign failed:\n$o" unless $o =~ /signed into/;
+    my ($pin) = `$tool --conf /dev/null denylist pin --signer $signer/signer_pub.pem` =~ /= (\w+)/;
+    open ($fh, '>>', $conf);
+    print $fh "access_list = $acl\naccess_list_signer = $signer/signer_pub.pem\naccess_list_signer_sha256 = $pin\n";
+    close ($fh);
+}
 if ($synced) {
     check_case ('service check passes', "check --svc-conf $svc", 1,
                 ['OK\s+service\s+startup checks passed', 'OK\s+service.ssliop_key', 'OK\s+service.ssliop_trust']);

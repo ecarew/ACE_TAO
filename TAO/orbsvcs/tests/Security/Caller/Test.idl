@@ -1,0 +1,7 @@
+interface Who
+{
+  /// The caller as the servant sees it through SecurityCurrent.
+  string whoami ();
+  void poke ();
+  oneway void shutdown ();
+};

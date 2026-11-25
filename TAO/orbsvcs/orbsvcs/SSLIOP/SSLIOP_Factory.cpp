@@ -5,6 +5,7 @@
 #include "orbsvcs/SSLIOP/SSLIOP_ORBInitializer.h"
 #include "orbsvcs/Security/Self_Check.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Deny_List.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Access_List.h"
 #include "tao/Security_Mode.h"
 #include "ace/OS_NS_strings.h"
 #include "ace/Read_Buffer.h"
@@ -288,6 +289,36 @@ namespace
                                      + std::to_string (deny->max_age_days ()) + ")").c_str ());
           else
             Self_Check::contribute ("denylist", Self_Check::CHECK_OK, summary.c_str ());
+        }
+    }
+
+    // Access list: which identified callers reach which objects.  Prod
+    // refuses a request no rule covers, so prod needs a pinned, loadable
+    // list and access_default must not say allow.
+    {
+      TAO::SSLIOP::Access_List *const acl = TAO::SSLIOP::Access_List::instance ();
+      bool const prod = host.mode == TAO_Security_Mode::MODE_PROD;
+      std::string const dflt = host.get ("access_default", prod ? "deny" : "allow");
+      std::string summary;
+      if (dflt != "allow" && dflt != "deny")
+        Self_Check::contribute ("access_list", bad, ("access_default must be allow or deny, not " + dflt).c_str ());
+      else if (prod && dflt == "allow")
+        Self_Check::contribute ("access_list", bad, "access_default = allow: prod refuses requests no rule covers");
+      else if (!acl->configured ())
+        Self_Check::contribute ("access_list", bad,
+                                prod ? "no access list (access_list): every TLS request would be refused"
+                                     : ("no access list (access_list); identified callers are "
+                                        + std::string (dflt == "deny" ? "refused" : "allowed")).c_str ());
+      else if (prod && host.get ("access_list_signer_sha256", host.get ("denylist_signer_sha256").c_str ()).empty ())
+        Self_Check::contribute ("access_list", bad,
+                                "access_list_signer_sha256 (or denylist_signer_sha256) is not set: the signer is not pinned");
+      else if (!acl->load (summary))
+        Self_Check::contribute ("access_list", bad, ("access list unusable: " + summary).c_str ());
+      else
+        {
+          Self_Check::banner_field ("acl", ("v" + std::to_string (acl->version ())).c_str ());
+          Self_Check::contribute ("access_list", Self_Check::CHECK_OK,
+                                  (summary + "; default " + dflt).c_str ());
         }
     }
 

@@ -413,3 +413,15 @@ setup_denylist (int argc, ACE_TCHAR *argv[])
     return cmd_pin (argc - 1, argv + 1);
   return usage ("denylist: unknown subcommand " + sub);
 }
+
+bool
+setup_sign_text (EVP_PKEY *key, std::string const &text, std::string &b64, std::string &error)
+{
+  return sign (key, text, b64, error);
+}
+
+EVP_PKEY *
+setup_public_key (EVP_PKEY *key)
+{
+  return public_copy (key).release ();
+}

@@ -1,4 +1,5 @@
 #include "orbsvcs/SSLIOP/SSLIOP_Deny_List.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Signed_File.h"
 
 #include "orbsvcs/Security/Audit_Logger.h"
 #include "tao/Security_Mode.h"
@@ -25,63 +26,9 @@ namespace
   using TAO::Security::Audit_Record;
   namespace Reason = TAO::Security::Audit_Reason;
 
-  bool
-  slurp (std::string const &path, std::string &out)
-  {
-    FILE *const fp = ACE_OS::fopen (path.c_str (), ACE_TEXT ("rb"));
-    if (fp == nullptr)
-      return false;
-    out.clear ();
-    char buf[4096];
-    size_t n;
-    while ((n = ACE_OS::fread (buf, 1, sizeof buf, fp)) > 0 && out.size () < (16u << 20))
-      out.append (buf, n);
-    ACE_OS::fclose (fp);
-    return true;
-  }
-
-  std::string
-  trim (std::string const &s)
-  {
-    size_t const b = s.find_first_not_of (" \t\r");
-    if (b == std::string::npos)
-      return "";
-    size_t const e = s.find_last_not_of (" \t\r");
-    return s.substr (b, e - b + 1);
-  }
-
-  /// Parses YYYY-MM-DDTHH:MM:SSZ.
-  bool
-  parse_time (std::string const &s, time_t &out)
-  {
-    struct tm tm_buf;
-    ACE_OS::memset (&tm_buf, 0, sizeof tm_buf);
-    int y, mo, d, h, mi, se;
-    char z = 0;
-    if (s.size () != 20 || ::sscanf (s.c_str (), "%4d-%2d-%2dT%2d:%2d:%2d%c", &y, &mo, &d, &h, &mi, &se, &z) != 7
-        || z != 'Z')
-      return false;
-    tm_buf.tm_year = y - 1900;
-    tm_buf.tm_mon = mo - 1;
-    tm_buf.tm_mday = d;
-    tm_buf.tm_hour = h;
-    tm_buf.tm_min = mi;
-    tm_buf.tm_sec = se;
-    out = ::timegm (&tm_buf);
-    return out != static_cast<time_t> (-1);
-  }
-
-  std::string
-  ssl_error ()
-  {
-    unsigned long const e = ::ERR_get_error ();
-    ::ERR_clear_error ();
-    if (e == 0)
-      return "no detail";
-    char buf[256];
-    ::ERR_error_string_n (e, buf, sizeof buf);
-    return buf;
-  }
+  using TAO::SSLIOP::Signed_File::parse_time;
+  using TAO::SSLIOP::Signed_File::ssl_error;
+  using TAO::SSLIOP::Signed_File::trim;
 }
 
 std::string
@@ -320,48 +267,20 @@ TAO::SSLIOP::Deny_List::read (Content &out, std::string &error)
       error = "denylist_signer is not set";
       return false;
     }
-  std::string text, sig;
-  if (!slurp (this->path_, text))
+  std::string text;
+  if (!Signed_File::read_verified (this->path_, this->signer_path_, this->signer_pin_, text, error))
     {
-      error = "cannot read " + this->path_;
+      if (error.find ("is not the pinned signer") != std::string::npos)
+        error += " (denylist_signer_sha256)";
       return false;
     }
-  if (!slurp (this->path_ + ".sig", sig))
-    {
-      error = "cannot read the signature " + this->path_ + ".sig";
-      return false;
-    }
-  EVP_PKEY *const signer = load_signer (this->signer_path_.c_str (), error);
-  if (signer == nullptr)
-    return false;
-  std::string const pin = spki_sha256 (signer);
-  bool ok = true;
-  if (!this->signer_pin_.empty () && pin != this->signer_pin_)
-    {
-      error = this->signer_path_ + " is not the pinned signer (denylist_signer_sha256)";
-      ok = false;
-    }
-  ok = ok && verify (text, sig, signer, error);
-  ::EVP_PKEY_free (signer);
-  if (!ok)
-    return false;
   return parse (text, out, error);
 }
 
 std::string
 TAO::SSLIOP::Deny_List::stamp () const
 {
-  std::string s;
-  for (std::string const &p : {this->path_, this->path_ + ".sig"})
-    {
-      ACE_stat st;
-      if (ACE_OS::stat (p.c_str (), &st) == 0)
-        s += std::to_string (static_cast<long long> (st.st_mtime)) + ":"
-             + std::to_string (static_cast<long long> (st.st_size)) + ";";
-      else
-        s += "-;";
-    }
-  return s;
+  return Signed_File::stamp (this->path_);
 }
 
 bool

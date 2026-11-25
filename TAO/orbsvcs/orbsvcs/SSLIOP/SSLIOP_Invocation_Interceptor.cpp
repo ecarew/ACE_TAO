@@ -2,6 +2,9 @@
 #include "orbsvcs/SSLIOP/SSLIOP_Invocation_Interceptor.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Current.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Deny_List.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Access_List.h"
+#include "orbsvcs/Security/Caller.h"
+#include "orbsvcs/Security/SL2_SecurityManager.h"
 #include "orbsvcs/Security/Audit_Logger.h"
 
 #include <openssl/x509.h>
@@ -12,6 +15,10 @@
 #include "tao/PortableServer/PS_CurrentC.h"
 #include "tao/PortableServer/POAC.h"
 #include "tao/debug.h"
+#include "tao/Security_Mode.h"
+
+#include <cctype>
+#include <memory>
 
 TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -49,6 +56,61 @@ TAO::SSLIOP::Server_Invocation_Interceptor::Server_Invocation_Interceptor (
 
   obj = info->resolve_initial_references ("SecurityLevel2:SecurityManager");
   this->sec2manager_ = SecurityLevel2::SecurityManager::_narrow (obj.in ());
+
+  // Identified (TLS) callers are decided by the signed access list when
+  // one is configured.  A request no rule covers is refused in prod and
+  // otherwise gets access_default (allow unless set to deny).
+  TAO_Security_Mode::Host_Config const &host = TAO_Security_Mode::host ();
+  bool const prod = host.mode == TAO_Security_Mode::MODE_PROD;
+  this->audit_grants_ = host.get ("audit_grants") == "on";
+  if (!CORBA::is_nil (this->sec2manager_.in ()))
+    {
+      SecurityLevel2::AccessDecision_var ad = this->sec2manager_->access_decision ();
+      TAO::Security::AccessDecision *const tao_ad = dynamic_cast<TAO::Security::AccessDecision *> (ad.in ());
+      if (tao_ad != nullptr)
+        {
+          tao_ad->default_caller_decision (!prod && host.get ("access_default", "allow") != "deny");
+          if (TAO::SSLIOP::Access_List::instance ()->configured ())
+            tao_ad->caller_policy (TAO::SSLIOP::Access_List::instance ());
+        }
+    }
+}
+
+namespace
+{
+  /// "/" + POA names + "/" + object id, the object id as text when it
+  /// is printable and as hex otherwise.
+  std::string
+  object_path_of (PortableInterceptor::ServerRequestInfo_ptr ri)
+  {
+    std::string path;
+    try
+      {
+        PortableInterceptor::AdapterName_var names = ri->adapter_name ();
+        for (CORBA::ULong i = 0; i < names->length (); ++i)
+          path += std::string ("/") + names[i].in ();
+      }
+    catch (CORBA::Exception const &)
+      {
+      }
+    CORBA::OctetSeq_var oid = ri->object_id ();
+    bool printable = oid->length () > 0;
+    for (CORBA::ULong i = 0; printable && i < oid->length (); ++i)
+      printable = ::isprint (oid[i]) != 0 && oid[i] != '/';
+    path += "/";
+    static char const hex[] = "0123456789abcdef";
+    for (CORBA::ULong i = 0; i < oid->length (); ++i)
+      {
+        if (printable)
+          path += static_cast<char> (oid[i]);
+        else
+          {
+            path += hex[oid[i] >> 4];
+            path += hex[oid[i] & 0xF];
+          }
+      }
+    return path;
+  }
 }
 
 TAO::SSLIOP::Server_Invocation_Interceptor::~Server_Invocation_Interceptor ()
@@ -116,6 +178,59 @@ TAO::SSLIOP::Server_Invocation_Interceptor::receive_request (
       ::X509_free (peer);
     }
 
+  // An identified (TLS) caller: build its record, give it to the
+  // servant through SecurityCurrent and decide the request on it.
+  if (!no_ssl && !this->collocated_)
+    {
+      TAO::SSLIOP::Current *const tao_current =
+        dynamic_cast<TAO::SSLIOP::Current *> (this->ssliop_current_.in ());
+      TAO::SSLIOP::Current_Impl *const impl = tao_current != nullptr ? tao_current->request_impl () : nullptr;
+      if (impl != nullptr)
+        {
+          auto caller = std::make_shared<TAO::Security::Caller const> (impl->make_caller ());
+          impl->caller (caller);
+
+          std::string const path = object_path_of (ri);
+          CORBA::String_var op = ri->operation ();
+
+          SecurityLevel2::CredentialsList cred_list (1);
+          cred_list.length (1);
+          cred_list[0] = new TAO::Security::Caller_Credentials (*caller, "TLS");
+          CORBA::Boolean const allowed =
+            CORBA::is_nil (ad.in ()) ? false : ad->access_allowed_caller (cred_list, path.c_str (), op.in ());
+
+          if (TAO_debug_level >= 3)
+            ORBSVCS_DEBUG ((LM_DEBUG, "SSLIOP (%P|%t) caller %C %C %C -> %C\n",
+                            caller->effective ().c_str (), path.c_str (), op.in (),
+                            allowed ? "allowed" : "denied"));
+
+          if (!allowed || this->audit_grants_)
+            {
+              TAO::Security::Audit_Record rec ("authz", allowed != 0,
+                                               allowed ? TAO::Security::Audit_Reason::ACCESS_GRANTED
+                                                       : TAO::Security::Audit_Reason::ACCESS_DENIED);
+              rec.field ("principal", caller->effective ())
+                .field ("subject", caller->subject)
+                .field ("cert_serial", caller->serial)
+                .field ("src", caller->source)
+                .field ("object", path)
+                .field ("op", op.in ());
+              long const v = TAO::SSLIOP::Access_List::instance ()->version ();
+              if (v > 0)
+                rec.field ("access_list_version", std::to_string (v));
+              TAO::Security::Audit_Logger::instance ()->write (rec);
+            }
+          if (!allowed)
+            throw CORBA::NO_PERMISSION ();
+        }
+      else
+        {
+          // A TLS session without its TSS state: refuse rather than let
+          // the request through undecided.
+          throw CORBA::NO_PERMISSION ();
+        }
+    }
+
   // if
   // (1) no SSL session state is available (which means that the
   //     invocation is received across a non-SSL transport)
@@ -129,32 +244,9 @@ TAO::SSLIOP::Server_Invocation_Interceptor::receive_request (
        * to AccessDecision::access_allowed()
        */
 
-      /* Get the credentials from SSLIOP */
-      SecurityLevel2::CredentialsList cred_list; // initial empty?
-#if 0
-      try {
-        SecurityLevel2::ReceivedCredentials_var rcvd_creds =
-          this->sec2_current_->received_credentials ();
-        // this gets the credentials received from the other side.  We
-        // should be able to put this into a CredentialsList with no
-        // problem.
-        //
-        // Do I really need to implement a sec2_current, or can I hack
-        // the conversion at this level?  I probably ought to do it as
-        // a real sec2_current with the conversion from sec3->sec2
-        // happening at a lower level.
-
-        cred_list.length(1);
-        cred_list[0] = rcvd_creds.in ();
-        /*
-          So, in looking for how we can do this, I find that the
-          SL3_SecurityCurrent::client_credentials() delegates to SL3_SecurityCurrent_Impl::client_credentials(),
-          which is pure virtual.
-        */
-      }
-      catch (...) {
-      }
-#endif
+      // No TLS session, so no identified caller: the decision is the
+      // per-object insecure-access flag (add_object) or its default.
+      SecurityLevel2::CredentialsList cred_list;
       /* Gather the elements that uniquely identify the target object */
       CORBA::ORBid_var orb_id = ri->orb_id ();
       CORBA::OctetSeq_var adapter_id = ri->adapter_id ();

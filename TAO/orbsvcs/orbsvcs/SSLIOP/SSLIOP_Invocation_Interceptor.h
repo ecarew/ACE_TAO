@@ -136,6 +136,9 @@ namespace TAO
       /// SecurityLevel2 security manager reference
       SecurityLevel2::SecurityManager_var sec2manager_;
       SecurityLevel2::Current_var sec2_current_;
+
+      /// Audit granted requests too (audit_grants = on).
+      bool audit_grants_ = false;
     };
   }  // End SSLIOP namespace.
 }  // End TAO namespace.

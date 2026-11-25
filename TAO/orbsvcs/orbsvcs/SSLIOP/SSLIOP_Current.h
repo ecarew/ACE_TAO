@@ -99,6 +99,11 @@ namespace TAO
       /// Teardown the Current for this request.
       void teardown (Current_Impl *prev_impl, bool &setup_done);
 
+      /// The current request's TSS implementation, or null outside an
+      /// SSLIOP upcall.  The server request interceptor stores the
+      /// request's caller record in it.
+      Current_Impl *request_impl ();
+
       /**
        * @name Downcast and Reference Counting Methods
        *

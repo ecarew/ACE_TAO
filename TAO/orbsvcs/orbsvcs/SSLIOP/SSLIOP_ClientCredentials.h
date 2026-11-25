@@ -24,8 +24,11 @@
 #include "orbsvcs/SSLIOP/SSLIOP_SSL.h"
 
 #include "orbsvcs/SecurityLevel3C.h"
+#include "orbsvcs/Security/Caller.h"
 
 #include "tao/LocalObject.h"
+
+#include <memory>
 
 #if defined(_MSC_VER)
 #pragma warning(push)
@@ -46,8 +49,10 @@ namespace TAO
         public virtual SSLIOP_Credentials
     {
     public:
-      /// Constructor
-      ClientCredentials (::X509 * cert, ::EVP_PKEY * evp, ::SSL * ssl);
+      /// Constructor.  @a caller is the request's caller record, when
+      /// the server request interceptor built one.
+      ClientCredentials (::X509 * cert, ::EVP_PKEY * evp, ::SSL * ssl,
+                         std::shared_ptr<TAO::Security::Caller const> caller = nullptr);
 
       /**
        * @name SecurityLevel3::Credentials Methods
@@ -103,6 +108,9 @@ namespace TAO
       /// Reference to the OpenSSL @c SSL data structure associated
       /// with the current security context (e.g. SSL connection).
       TAO::SSLIOP::SSL_var ssl_;
+
+      /// The request's caller record, or null.
+      std::shared_ptr<TAO::Security::Caller const> caller_;
     };
   } // End SSLIOP namespace
 }  // End TAO namespace

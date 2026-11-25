@@ -21,8 +21,11 @@
 
 #include "orbsvcs/SSLIOPC.h"
 #include "orbsvcs/Security/SL3_SecurityCurrent_Impl.h"
+#include "orbsvcs/Security/Caller.h"
 
 #include <openssl/ssl.h>
+
+#include <memory>
 
 TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -72,6 +75,16 @@ namespace TAO
       /// Return pointer to the SSL session state for the current upcall.
       SSL *ssl ();
 
+      /// A caller record built from the TLS session: the peer
+      /// certificate's SPIFFE IDs, subject, issuer and serial, and the
+      /// peer's address.
+      TAO::Security::Caller make_caller () const;
+
+      /// The caller of the current request, once the server request
+      /// interceptor has built it (null before).
+      void caller (std::shared_ptr<TAO::Security::Caller const> c);
+      std::shared_ptr<TAO::Security::Caller const> caller () const;
+
     protected:
       /// Return the unique tag that identifies the concrete subclass.
       CORBA::ULong tag () const override;
@@ -83,6 +96,9 @@ namespace TAO
     private:
       /// The SSL session state corresponding to the current upcall.
       SSL *ssl_ {};
+
+      /// The caller of the current request.
+      std::shared_ptr<TAO::Security::Caller const> caller_;
     };
   }  // End SSLIOP namespace.
 }  // End TAO namespace.

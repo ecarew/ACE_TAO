@@ -328,6 +328,51 @@ TAO::Security::AccessDecision::remove_object
 }
 
 CORBA::Boolean
+TAO::Security::AccessDecision::access_allowed_caller (
+          ::SecurityLevel2::CredentialsList const & cred_list,
+          char const * object_path,
+          char const * operation_name)
+{
+  Caller const *const caller =
+    cred_list.length () > 0 ? Caller_Credentials::caller_of (cred_list[0].in ()) : nullptr;
+  if (caller == nullptr)
+    return false;
+
+  Caller_Policy *const policy = this->caller_policy_.load ();
+  if (policy != nullptr)
+    {
+      switch (policy->decide (*caller, object_path, operation_name))
+        {
+        case Caller_Policy::ALLOW:
+          return true;
+        case Caller_Policy::DENY:
+          return false;
+        case Caller_Policy::NO_RULE:
+          break;
+        }
+    }
+  return this->default_caller_decision_.load ();
+}
+
+CORBA::Boolean
+TAO::Security::AccessDecision::default_caller_decision ()
+{
+  return this->default_caller_decision_.load ();
+}
+
+void
+TAO::Security::AccessDecision::default_caller_decision (CORBA::Boolean d)
+{
+  this->default_caller_decision_.store (d);
+}
+
+void
+TAO::Security::AccessDecision::caller_policy (Caller_Policy *policy)
+{
+  this->caller_policy_.store (policy);
+}
+
+CORBA::Boolean
 TAO::Security::AccessDecision::default_decision ()
 {
   return this->default_allowance_decision_;

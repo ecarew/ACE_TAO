@@ -1,14 +1,17 @@
 #include "orbsvcs/SSLIOP/SSLIOP_ClientCredentials.h"
 #include "orbsvcs/SSLIOP/SSLIOP_OwnCredentials.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Current_Impl.h"
 
 TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 
 TAO::SSLIOP::ClientCredentials::ClientCredentials (
   X509 * cert,
   EVP_PKEY *evp,
-  SSL * ssl)
+  SSL * ssl,
+  std::shared_ptr<TAO::Security::Caller const> caller)
   : SSLIOP_Credentials (cert, evp),
-    ssl_ (TAO::SSLIOP::OpenSSL_traits< ::SSL >::_duplicate (ssl))
+    ssl_ (TAO::SSLIOP::OpenSSL_traits< ::SSL >::_duplicate (ssl)),
+    caller_ (std::move (caller))
 {
 }
 
@@ -31,7 +34,15 @@ TAO::SSLIOP::ClientCredentials::context_id ()
 SecurityLevel3::Principal *
 TAO::SSLIOP::ClientCredentials::client_principal ()
 {
-  throw CORBA::NO_IMPLEMENT ();
+  // The request's caller record names the effective principal (an
+  // asserted or password-authenticated identity when there is one);
+  // without one, the peer certificate alone.
+  if (this->caller_)
+    return TAO::Security::principal_of (*this->caller_);
+
+  TAO::SSLIOP::Current_Impl impl;
+  impl.ssl (this->ssl_.in ());
+  return TAO::Security::principal_of (impl.make_caller ());
 }
 
 SecurityLevel3::StatementList *

@@ -31,7 +31,22 @@ sub ssliop {
 my $good_ssl = "-SSLAuthenticate SERVER_AND_CLIENT -SSLCAfile PEM:$dir/ca.pem "
              . "-SSLCertificate PEM:$dir/server_cert.pem -SSLPrivateKey PEM:$dir/server_key_enc.pem "
              . "-SSLPassword file:$dir/password.txt";
-my $prod = "mode = prod\naudit_sink = stderr\ntime_sync_wait = 0\ntrust_anchor_sha256 = $anchor\n";
+# Prod refuses requests no access rule covers, and refuses to start
+# without a signed access list: every prod case below gets one that
+# allows any identified caller (signer from ../Transport).
+my $tool = "$ENV{TAO_ROOT}/orbsvcs/Security_Setup/ace-tao-setup";
+my $signer = "$dir/../Transport";
+my $acl = "$dir/mode_test_access.list";
+{
+    open (my $fh, '>', $acl) || die "$acl: $!";
+    print $fh "version 0\nissued 2026-01-01T00:00:00Z\nallow * *\n";
+    close ($fh);
+    my $o = `$tool --conf /dev/null access sign --key PEM:$signer/signer_key_enc.pem --password-file $signer/password.txt --file $acl --bump 2>&1`;
+    die "access sign failed:\n$o" unless $o =~ /signed into/;
+}
+my ($acl_pin) = `$tool --conf /dev/null denylist pin --signer $signer/signer_pub.pem` =~ /= (\w+)/;
+my $acl_conf = "access_list = $acl\naccess_list_signer = $signer/signer_pub.pem\naccess_list_signer_sha256 = $acl_pin\n";
+my $prod = "mode = prod\naudit_sink = stderr\ntime_sync_wait = 0\ntrust_anchor_sha256 = $anchor\n" . $acl_conf;
 my $test_mode = "mode = test\naudit_sink = stderr\n";
 
 # name, security.conf (undef: none), conf file mode, svc.conf (undef: none),
@@ -172,10 +187,10 @@ foreach my $c (@cases) {
 # It needs a prod ORB that starts, so a synchronized clock.
 if ($clock eq 'unsynced') {
     print "skipped: degraded-mode case (clock not synchronized here)\n";
-    unlink $conf, $svc, $sock, "$dir/mode_test_events.db";
+    unlink $conf, $svc, $sock, "$dir/mode_test_events.db", $acl, "$acl.sig";
     exit $status;
 }
-write_file ($conf, "mode = prod\naudit_sink = unix:$sock\ntime_sync_wait = 0\ntrust_anchor_sha256 = $anchor\n", 0600);
+write_file ($conf, "mode = prod\naudit_sink = unix:$sock\ntime_sync_wait = 0\ntrust_anchor_sha256 = $anchor\n" . $acl_conf, 0600);
 write_file ($svc, ssliop ($good_ssl), 0600);
 $ENV{'ACE_TAO_SECURITY_CONF'} = $conf;
 my $out = `$exe -degrade $sock -ORBSvcConf $svc -ORBCollocation no -ORBListenEndpoints iiop://127.0.0.1: 2>&1`;
@@ -186,5 +201,5 @@ if ($? != 0 || scalar (grep { /^ok:/ } @lines) != 5) {
     $status = 1;
 }
 
-unlink $conf, $svc, $sock, "$dir/mode_test_events.db";
+unlink $conf, $svc, $sock, "$dir/mode_test_events.db", $acl, "$acl.sig";
 exit $status;

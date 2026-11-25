@@ -20,7 +20,10 @@ int setup_cert (int argc, ACE_TCHAR *argv[]);
 /// denylist add|remove|sign|check|pin ... (denylist.cpp)
 int setup_denylist (int argc, ACE_TCHAR *argv[]);
 
-// Shared by keys.cpp and denylist.cpp.
+/// access sign|check|test ... (access.cpp)
+int setup_access (int argc, ACE_TCHAR *argv[]);
+
+// Shared by keys.cpp, denylist.cpp and access.cpp.
 typedef struct evp_pkey_st EVP_PKEY;
 
 /// Reads a password or PIN file as SSLIOP's -SSLPassword file: does.
@@ -31,6 +34,12 @@ EVP_PKEY *setup_load_key (std::string const &spec, std::string const &password, 
 
 /// Writes through a temporary file and rename.
 bool setup_write_atomic (std::string const &path, std::string const &text, unsigned mode, std::string &error);
+
+/// Base64 SHA-256 signature of @a text with @a key, newline-terminated (denylist.cpp).
+bool setup_sign_text (EVP_PKEY *key, std::string const &text, std::string &b64, std::string &error);
+
+/// A software copy of the public half of @a key (caller frees), or null.
+EVP_PKEY *setup_public_key (EVP_PKEY *key);
 
 // Provided by ace_tao_setup.cpp.
 

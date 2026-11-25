@@ -1,0 +1,30 @@
+// -*- MPC -*-
+project(*idl) : taoidldefaults {
+  IDL_Files {
+    Test.idl
+  }
+  custom_only = 1
+}
+
+project(*Server) : taoserver, orbsvcslib, security, ssliop {
+  after += *idl
+  exename = server
+  Source_Files {
+    TestS.cpp
+    TestC.cpp
+    server.cpp
+  }
+  IDL_Files {
+  }
+}
+
+project(*Client) : taoclient, orbsvcslib, security, ssliop {
+  after += *idl *Server
+  exename = client
+  Source_Files {
+    TestC.cpp
+    client.cpp
+  }
+  IDL_Files {
+  }
+}

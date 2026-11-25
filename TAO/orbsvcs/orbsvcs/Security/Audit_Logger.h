@@ -79,6 +79,11 @@ namespace TAO
       constexpr char const DENYLIST_REJECTED[] = "DENYLIST_REJECTED";
       constexpr char const DENYLIST_SIGNED[] = "DENYLIST_SIGNED";
       constexpr char const CONNECTION_REFUSED[] = "CONNECTION_REFUSED";
+      constexpr char const ACCESS_DENIED[] = "ACCESS_DENIED";
+      constexpr char const ACCESS_GRANTED[] = "ACCESS_GRANTED";
+      constexpr char const ACCESS_LIST_LOADED[] = "ACCESS_LIST_LOADED";
+      constexpr char const ACCESS_LIST_REJECTED[] = "ACCESS_LIST_REJECTED";
+      constexpr char const ACCESS_LIST_SIGNED[] = "ACCESS_LIST_SIGNED";
     }
 
     /**

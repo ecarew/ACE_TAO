@@ -25,8 +25,12 @@
 #include "tao/LocalObject.h"
 #include "tao/PortableServer/PS_ForwardC.h"
 
+#include "orbsvcs/Security/Caller.h"
+
 #include "ace/Hash_Map_Manager_T.h"
 #include "ace/Null_Mutex.h"
+
+#include <atomic>
 
 #if defined(_MSC_VER)
 #pragma warning(push)
@@ -71,6 +75,18 @@ namespace TAO
           char const * operation_name,
           ::CORBA::Boolean collocated_invocation) override;
 
+      ::CORBA::Boolean access_allowed_caller (
+          ::SecurityLevel2::CredentialsList const & cred_list,
+          char const * object_path,
+          char const * operation_name) override;
+
+      ::CORBA::Boolean default_caller_decision () override;
+      void default_caller_decision (::CORBA::Boolean d) override;
+
+      /// Installs the policy access_allowed_caller() consults (not
+      /// owned; it must outlive this object).  Null removes it.
+      void caller_policy (Caller_Policy *policy);
+
       ::CORBA::Boolean default_decision () override;
       void default_decision (::CORBA::Boolean d) override;
 
@@ -104,6 +120,12 @@ namespace TAO
        * we are handling a collocated call
        */
       ::CORBA::Boolean default_collocated_decision_;
+
+      /// access_allowed_caller() for a request no rule covers.
+      std::atomic<bool> default_caller_decision_ {true};
+
+      /// The caller policy, or null.
+      std::atomic<Caller_Policy *> caller_policy_ {nullptr};
       /*!
        * Map containing references and their designated insecure access.
        */

@@ -166,4 +166,10 @@ tao_TAO_SSLIOP_Current_upcast (void *src)
   return *tmp;
 }
 
+TAO::SSLIOP::Current_Impl *
+TAO::SSLIOP::Current::request_impl ()
+{
+  return this->implementation ();
+}
+
 TAO_END_VERSIONED_NAMESPACE_DECL

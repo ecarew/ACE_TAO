@@ -28,6 +28,7 @@
 //   key create|check ...        service keys in a keystore (see keys.cpp)
 //   cert request|renew ...      certificates from step-ca (see keys.cpp)
 //   denylist ...                the signed deny-list (see denylist.cpp)
+//   access ...                  the signed access list (see access.cpp)
 //
 // --conf defaults to ACE_TAO_SECURITY_CONF or TAO_SECURITY_CONF_DEFAULT,
 // --marker to TAO_SECURITY_ENROLLED_MARKER (the ORB_init guard always uses
@@ -92,7 +93,8 @@ namespace
     "  key create --type file|pkcs11|tpm2|sep ... | key check --key SPEC ...\n"
     "  cert request --key SPEC --token-file F --out PEM ... | cert renew --key SPEC --cert PEM ...\n"
     "  denylist add|remove|sign|check|pin ...\n"
-    "  (key, cert or denylist alone prints their options)\n"
+    "  access sign|check|test ...\n"
+    "  (key, cert, denylist or access alone prints their options)\n"
     "  (check --gate exits 2 only on failures, 0 otherwise)\n";
 
   int
@@ -844,6 +846,8 @@ ACE_TMAIN (int argc, ACE_TCHAR *argv[])
     return setup_cert (rest, args);
   if (cmd == "denylist")
     return setup_denylist (rest, args);
+  if (cmd == "access")
+    return setup_access (rest, args);
   if (cmd == "run")
     return setup_run (rest, args, prog, conf_path.c_str ());
   return usage (("unknown command " + cmd).c_str ());

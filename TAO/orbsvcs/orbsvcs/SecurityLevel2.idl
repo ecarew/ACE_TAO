@@ -284,6 +284,22 @@ module TAO {
          in ::CORBA::Identifier operation_name,
          in boolean collocation_invocation);
 
+      /*! Decides a request from an identified caller (a TLS peer
+          certificate, later CSIv2).  cred_list[0] holds the caller's
+          received credentials (TAO::Security::Caller_Credentials);
+          object_path names the target as "/" + POA names + "/" + object
+          id.  A request that no rule of the installed caller policy
+          covers gets default_caller_decision; no identified caller is
+          refused. */
+      boolean access_allowed_caller (
+         in ::SecurityLevel2::CredentialsList cred_list,
+         in string object_path,
+         in ::CORBA::Identifier operation_name);
+
+      /*! Decision for an identified caller that no rule covers (true
+          unless set; prod sets it false). */
+      attribute boolean default_caller_decision;
+
       /*! Default value returned when a reference is not in the list. */
       attribute boolean default_decision;
 
