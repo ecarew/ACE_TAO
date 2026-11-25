@@ -29,6 +29,7 @@
 
 #include "ace/SSL/sslconf.h"
 #include "ace/SSL/SSL_Context.h"
+#include "ace/OS_NS_ctype.h"
 
 #include <openssl/evp.h>
 #include <openssl/pem.h>

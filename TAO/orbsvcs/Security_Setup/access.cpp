@@ -30,6 +30,7 @@
 #include <openssl/evp.h>
 
 #include <memory>
+#include <cctype>
 
 using TAO::SSLIOP::Access_List;
 using TAO::SSLIOP::Deny_List;

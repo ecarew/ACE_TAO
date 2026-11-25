@@ -34,6 +34,7 @@
 
 #include <set>
 #include <vector>
+#include <cctype>
 
 using TAO::SSLIOP::Deny_List;
 namespace Reason = TAO::Security::Audit_Reason;

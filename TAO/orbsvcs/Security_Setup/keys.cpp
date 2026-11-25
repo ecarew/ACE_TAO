@@ -59,6 +59,7 @@
 
 #include <memory>
 #include <vector>
+#include <cctype>
 
 namespace Reason = TAO::Security::Audit_Reason;
 

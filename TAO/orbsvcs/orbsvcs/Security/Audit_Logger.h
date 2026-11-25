@@ -183,7 +183,7 @@ namespace TAO
     class TAO_Security_Export Audit_Logger
     {
     public:
-      struct Options
+      struct TAO_Security_Export Options
       {
         Options ();
 

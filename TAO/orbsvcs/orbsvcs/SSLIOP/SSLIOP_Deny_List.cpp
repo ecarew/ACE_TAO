@@ -18,6 +18,7 @@
 #include <openssl/x509v3.h>
 
 #include <vector>
+#include <cctype>
 
 TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 

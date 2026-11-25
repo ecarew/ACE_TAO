@@ -8,6 +8,7 @@
 #include "ace/Guard_T.h"
 #include "ace/OS_NS_stdlib.h"
 #include "ace/OS_NS_time.h"
+#include <cctype>
 
 TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 

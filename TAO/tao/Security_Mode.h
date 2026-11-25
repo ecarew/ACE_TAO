@@ -82,7 +82,7 @@ public:
     MODE_EMBEDDED
   };
 
-  struct Host_Config
+  struct TAO_Export Host_Config
   {
     Mode mode {MODE_NONE};
     /// The configuration file that was looked for.
