@@ -63,6 +63,22 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
   verifies it and shows what it decides for one request
   (ACCESS_LIST_SIGNED). New test orbsvcs/tests/Security/Caller.
 
+. SSLIOP references carry the CSIv2 TLS component. With security.conf
+  csiv2 = supported or required (the prod default; off elsewhere), every
+  SSLIOP profile gets a TAG_CSI_SEC_MECH_LIST component beside
+  TAG_SSL_SEC_TRANS: one compound mechanism whose transport is
+  TAG_TLS_SEC_TRANS, listing the TLS endpoint's host and port and its
+  association options (EstablishTrustInClient when client certificates are
+  verified or required). No authentication or attribute layer is
+  advertised yet. A TAO client takes the TLS port from TAG_TLS_SEC_TRANS
+  when a reference has no TAG_SSL_SEC_TRANS (a CSIv2-only server such as
+  JacORB), and refuses a profile whose two components name different TLS
+  ports (IOR_TLS_MISMATCH). New test orbsvcs/tests/Security/CSIv2_IOR.
+
+. SSLIOP never negotiates below TLS 1.2: SSL 3.0, TLS 1.0 and TLS 1.1 are
+  refused in every mode, whatever -SSLVersionList says (asking for them
+  logs a warning). The startup self-check reports it (tls_versions).
+
 . ace-tao-setup makes service keys and gets their certificates. "key create"
   generates a key where it will stay: in a PKCS#11 token (pkcs11-provider),
   a TPM (tpm2-openssl, as a TPM-wrapped blob), the macOS Secure Enclave (the

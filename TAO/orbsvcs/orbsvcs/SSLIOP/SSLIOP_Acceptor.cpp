@@ -9,6 +9,7 @@
 #include "tao/CDR.h"
 #include "tao/debug.h"
 #include "tao/Security_Mode.h"
+#include "ace/SSL/SSL_Context.h"
 
 #if !defined(__ACE_INLINE__)
 #include "orbsvcs/SSLIOP/SSLIOP_Acceptor.inl"
@@ -28,6 +29,13 @@ TAO::SSLIOP::Acceptor::Acceptor (::Security::QOP qop,
 {
   // Prod listens only for TLS: no plain IIOP port at all.
   this->plain_listener (TAO_Security_Mode::host ().mode != TAO_Security_Mode::MODE_PROD);
+
+  // CSIv2 IOR component (TAG_CSI_SEC_MECH_LIST): on by default in prod.
+  {
+    bool const prod = TAO_Security_Mode::host ().mode == TAO_Security_Mode::MODE_PROD;
+    std::string const v = TAO_Security_Mode::host ().get ("csiv2", prod ? "supported" : "off");
+    this->csiv2_mode_ = v == "required" ? 2 : v == "supported" ? 1 : 0;
+  }
 
   // --- CSIv1 ---
 
@@ -94,6 +102,80 @@ TAO::SSLIOP::Acceptor::~Acceptor ()
   delete this->creation_strategy_;
   delete this->concurrency_strategy_;
   delete this->accept_strategy_;
+}
+
+namespace
+{
+  /// An encapsulation (byte-order flag + CDR) of @a value in @a out.
+  template <typename T, typename SEQ>
+  bool
+  encapsulate (T const &value, SEQ &out)
+  {
+    TAO_OutputCDR cdr;
+    if (!(cdr << TAO_OutputCDR::from_boolean (TAO_ENCAP_BYTE_ORDER)) || !(cdr << value))
+      return false;
+    CORBA::ULong const length = static_cast<CORBA::ULong> (cdr.total_length ());
+    out.length (length);
+    CORBA::Octet *buf = out.get_buffer ();
+    for (ACE_Message_Block const *mb = cdr.begin (); mb != nullptr; mb = mb->cont ())
+      {
+        ACE_OS::memcpy (buf, mb->rd_ptr (), mb->length ());
+        buf += mb->length ();
+      }
+    return true;
+  }
+}
+
+void
+TAO::SSLIOP::Acceptor::add_csiv2_component (TAO_SSLIOP_Profile *pfile, size_t first, size_t count)
+{
+  if (this->csiv2_mode_ == 0 || pfile == nullptr)
+    return;
+
+  // The TLS layer: what the TLS endpoint supports and requires, and
+  // where it is.  A service that verifies its clients' certificates
+  // supports (and, if it refuses clients without one, requires)
+  // EstablishTrustInClient.
+  CSIIOP::TLS_SEC_TRANS tls = this->csiv2_component_;
+  int const verify = ACE_SSL_Context::instance ()->default_verify_mode ();
+  if ((verify & SSL_VERIFY_PEER) != 0)
+    {
+      ACE_SET_BITS (tls.target_supports, CSIIOP::EstablishTrustInClient);
+      if ((verify & SSL_VERIFY_FAIL_IF_NO_PEER_CERT) != 0)
+        ACE_SET_BITS (tls.target_requires, CSIIOP::EstablishTrustInClient);
+    }
+  tls.addresses.length (static_cast<CORBA::ULong> (count));
+  for (size_t i = 0; i < count; ++i)
+    {
+      tls.addresses[static_cast<CORBA::ULong> (i)].host_name = CORBA::string_dup (this->hosts_[first + i]);
+      tls.addresses[static_cast<CORBA::ULong> (i)].port = this->ssl_component_.port;
+    }
+
+  CSIIOP::CompoundSecMechList list;
+  list.stateful = false;
+  list.mechanism_list.length (1);
+  CSIIOP::CompoundSecMech &mech = list.mechanism_list[0];
+  mech.target_requires = tls.target_requires;
+  mech.transport_mech.tag = CSIIOP::TAG_TLS_SEC_TRANS;
+  if (!encapsulate (tls, mech.transport_mech.component_data))
+    return;
+
+  // No client authentication layer (GSSUP) and no attribute layer
+  // (identity assertion) yet: both advertise nothing.
+  mech.as_context_mech.target_supports = 0;
+  mech.as_context_mech.target_requires = 0;
+  mech.as_context_mech.client_authentication_mech.length (0);
+  mech.as_context_mech.target_name.length (0);
+  mech.sas_context_mech.target_supports = 0;
+  mech.sas_context_mech.target_requires = 0;
+  mech.sas_context_mech.privilege_authorities.length (0);
+  mech.sas_context_mech.supported_naming_mechanisms.length (0);
+  mech.sas_context_mech.supported_identity_types = 0;
+
+  IOP::TaggedComponent component;
+  component.tag = IOP::TAG_CSI_SEC_MECH_LIST;
+  if (encapsulate (list, component.component_data))
+    pfile->tagged_components ().set_component (component);
 }
 
 int
@@ -197,6 +279,8 @@ TAO::SSLIOP::Acceptor::create_new_profile (const TAO::ObjectKey &object_key,
         }
 
       pfile->tagged_components ().set_component (component);
+
+      this->add_csiv2_component (pfile, i, 1);
     }
 
   return 0;
@@ -327,6 +411,9 @@ TAO::SSLIOP::Acceptor::create_shared_profile (const TAO::ObjectKey &object_key,
       ssl_endp->priority (priority);
       ssliop_profile->add_endpoint (ssl_endp);
     }
+
+  if (this->orb_core_->orb_params ()->std_profile_components () != 0)
+    this->add_csiv2_component (ssliop_profile, 0, this->endpoint_count_);
 
   return 0;
 }

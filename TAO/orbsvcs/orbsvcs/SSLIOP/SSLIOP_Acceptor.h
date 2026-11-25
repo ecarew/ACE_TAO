@@ -32,6 +32,8 @@
 
 TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 
+class TAO_SSLIOP_Profile;
+
 namespace TAO
 {
   namespace SSLIOP
@@ -113,6 +115,15 @@ namespace TAO
                                  TAO_MProfile &mprofile,
                                  CORBA::Short priority);
 
+      /**
+       * Adds the CSIv2 TAG_CSI_SEC_MECH_LIST component to @a pfile when
+       * csiv2 is not off: one compound mechanism whose transport is
+       * TAG_TLS_SEC_TRANS, naming hosts_[first .. first + count) on the
+       * SSL port, so CSIv2 ORBs (JacORB) find the TLS endpoint.  No
+       * authentication or attribute layer is advertised yet.
+       */
+      void add_csiv2_component (TAO_SSLIOP_Profile *pfile, size_t first, size_t count);
+
     private:
       /// The concrete acceptor, as a pointer to it's base class.
       BASE_ACCEPTOR ssl_acceptor_;
@@ -138,6 +149,9 @@ namespace TAO
        *
        */
       CSIIOP::TLS_SEC_TRANS csiv2_component_;
+
+      /// security.conf csiv2: 0 off, 1 supported, 2 required.
+      int csiv2_mode_ {};
 
       /// The accept() timeout.
       /**

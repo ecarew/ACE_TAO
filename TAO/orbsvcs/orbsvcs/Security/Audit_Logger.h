@@ -86,6 +86,7 @@ namespace TAO
       constexpr char const ACCESS_LIST_LOADED[] = "ACCESS_LIST_LOADED";
       constexpr char const ACCESS_LIST_REJECTED[] = "ACCESS_LIST_REJECTED";
       constexpr char const ACCESS_LIST_SIGNED[] = "ACCESS_LIST_SIGNED";
+      constexpr char const IOR_TLS_MISMATCH[] = "IOR_TLS_MISMATCH";
     }
 
     /**

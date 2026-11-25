@@ -263,6 +263,18 @@ namespace
       Self_Check::contribute ("ssliop_protection", bad,
                               "-SSLNoProtection accepts unprotected invocations");
 
+    Self_Check::contribute ("tls_versions", Self_Check::CHECK_OK, "TLS 1.2 minimum (SSL 3.0, TLS 1.0, 1.1 refused)");
+
+    {
+      std::string const csiv2 = host.get ("csiv2", host.mode == TAO_Security_Mode::MODE_PROD ? "supported" : "off");
+      if (csiv2 != "off" && csiv2 != "supported" && csiv2 != "required")
+        Self_Check::contribute ("csiv2", bad, ("csiv2 must be off, supported or required, not " + csiv2).c_str ());
+      else
+        Self_Check::contribute ("csiv2", Self_Check::CHECK_OK,
+                                csiv2 == "off" ? "off: no CSIv2 component in references"
+                                               : ("CSIv2 TLS transport advertised (TAG_CSI_SEC_MECH_LIST); csiv2 " + csiv2).c_str ());
+    }
+
     if (host.mode == TAO_Security_Mode::MODE_PROD)
       Self_Check::contribute ("ssliop_listener", Self_Check::CHECK_OK,
                               "no plain IIOP listener; TLS only (IIOP port 0 in references)");
@@ -846,6 +858,16 @@ TAO::SSLIOP::Protocol_Factory::init (int argc, ACE_TCHAR* argv[])
           if (curarg < argc)
             {
               ssl_ctx->filter_versions (ACE_TEXT_ALWAYS_CHAR(argv[curarg]));
+              ACE_CString list (ACE_TEXT_ALWAYS_CHAR (argv[curarg]));
+              for (size_t i = 0; i < list.length (); ++i)
+                list[i] = static_cast<char> (ACE_OS::ace_tolower (list[i]));
+              if (list.find ("sslv3") != ACE_CString::npos
+                  || list.find ("tlsv1.1") != ACE_CString::npos
+                  || (list.find ("tlsv1") != ACE_CString::npos
+                      && list.find ("tlsv1.") == ACE_CString::npos))
+                ORBSVCS_ERROR ((LM_WARNING,
+                                ACE_TEXT ("TAO (%P|%t) - SSLIOP -SSLVersionList: versions below ")
+                                ACE_TEXT ("TLS 1.2 are refused (TLS 1.2 is the minimum)\n")));
             }
         }
       else if (ACE_OS::strcasecmp (argv[curarg],
@@ -1117,6 +1139,15 @@ TAO::SSLIOP::Protocol_Factory::init (int argc, ACE_TCHAR* argv[])
                           ec_name.in ()));
         }
 #endif
+    }
+
+  // TLS 1.2 is the floor in every mode: SSL 3.0, TLS 1.0 and TLS 1.1
+  // are never negotiated, whatever -SSLVersionList asks for.
+  if (::SSL_CTX_set_min_proto_version (ssl_ctx->context (), TLS1_2_VERSION) != 1)
+    {
+      ORBSVCS_ERROR ((LM_ERROR,
+                      ACE_TEXT ("TAO (%P|%t) - SSLIOP cannot set TLS 1.2 as the minimum version\n")));
+      return -1;
     }
 
   report_mode_checks (certificate_path.in (), certificate_type,

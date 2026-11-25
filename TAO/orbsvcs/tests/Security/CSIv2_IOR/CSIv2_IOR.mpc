@@ -1,0 +1,7 @@
+// -*- MPC -*-
+project(*Tool) : taoexe, orbsvcslib, security, ssliop {
+  exename = ior_tool
+  Source_Files {
+    ior_tool.cpp
+  }
+}

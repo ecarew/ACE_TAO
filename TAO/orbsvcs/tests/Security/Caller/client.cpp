@@ -34,6 +34,14 @@ ACE_TMAIN (int argc, ACE_TCHAR *argv[])
         }
 
       CORBA::Object_var obj = orb->string_to_object (ior);
+      if (CORBA::is_nil (obj.in ()))
+        {
+          // Every profile was refused while decoding (for instance a
+          // CSIv2 component that disagrees with TAG_SSL_SEC_TRANS).
+          ACE_OS::printf ("NIL REFERENCE\n");
+          orb->destroy ();
+          return 1;
+        }
       Who_var who = Who::_unchecked_narrow (obj.in ());
       try
         {

@@ -131,6 +131,18 @@ TAO_BEGIN_VERSIONED_NAMESPACE_DECL
        */
       int decode_tagged_endpoints ();
 
+      /// The CSIv1 decoding: TAG_SSL_SEC_TRANS and TAO's endpoint list.
+      int decode_ssl (TAO_InputCDR &cdr);
+
+      /**
+       * The CSIv2 transport (TAG_CSI_SEC_MECH_LIST, its TAG_TLS_SEC_TRANS
+       * mechanism).  Without a TAG_SSL_SEC_TRANS component it gives each
+       * endpoint its TLS port, so a CSIv2-only server (JacORB) is reached
+       * over TLS.  With both, their ports must agree, else -1
+       * (IOR_TLS_MISMATCH, audited).  0 otherwise.
+       */
+      int apply_csiv2 ();
+
       /**
        * Head of this profile's list of endpoints.  This endpoint is
        * not dynamically allocated because a profile always contains

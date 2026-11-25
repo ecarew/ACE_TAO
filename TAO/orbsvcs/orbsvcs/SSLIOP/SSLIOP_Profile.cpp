@@ -1,7 +1,13 @@
+#include "orbsvcs/Log_Macros.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Profile.h"
 #include "orbsvcs/SSLIOP/ssl_endpointsC.h"
+#include "orbsvcs/Security/Audit_Logger.h"
+#include "orbsvcs/CSIIOPC.h"
 #include "tao/CDR.h"
+#include "tao/debug.h"
 #include "ace/OS_NS_string.h"
+
+#include <string>
 
 TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -77,6 +83,107 @@ TAO_SSLIOP_Profile::~TAO_SSLIOP_Profile ()
 //  1 -> success.
 int
 TAO_SSLIOP_Profile::decode (TAO_InputCDR & cdr)
+{
+  int const r = this->decode_ssl (cdr);
+  if (r != 1)
+    return r;
+  return this->apply_csiv2 () == 0 ? 1 : -1;
+}
+
+namespace
+{
+  /// Decodes the encapsulation @a data into @a value.
+  template <typename T, typename SEQ>
+  bool
+  decapsulate (SEQ const &data, T &value)
+  {
+    TAO_InputCDR cdr (reinterpret_cast<char const *> (data.get_buffer ()), data.length ());
+    CORBA::Boolean byte_order;
+    if (!(cdr >> ACE_InputCDR::to_boolean (byte_order)))
+      return false;
+    cdr.reset_byte_order (static_cast<int> (byte_order));
+    return (cdr >> value) != 0;
+  }
+}
+
+int
+TAO_SSLIOP_Profile::apply_csiv2 ()
+{
+  IOP::TaggedComponent mechs;
+  mechs.tag = IOP::TAG_CSI_SEC_MECH_LIST;
+  if (!this->tagged_components ().get_component (mechs))
+    return 0;
+
+  // The first compound mechanism whose transport is TLS.
+  CSIIOP::CompoundSecMechList list;
+  if (!decapsulate (mechs.component_data, list))
+    {
+      if (TAO_debug_level > 0)
+        ORBSVCS_DEBUG ((LM_DEBUG, ACE_TEXT ("TAO (%P|%t) - SSLIOP_Profile: ")
+                                  ACE_TEXT ("undecodable TAG_CSI_SEC_MECH_LIST ignored\n")));
+      return 0;
+    }
+  CSIIOP::TLS_SEC_TRANS tls;
+  bool found = false;
+  for (CORBA::ULong i = 0; !found && i < list.mechanism_list.length (); ++i)
+    if (list.mechanism_list[i].transport_mech.tag == CSIIOP::TAG_TLS_SEC_TRANS)
+      found = decapsulate (list.mechanism_list[i].transport_mech.component_data, tls);
+  if (!found || tls.addresses.length () == 0)
+    return 0;
+
+  IOP::TaggedComponent ssl;
+  ssl.tag = ::SSLIOP::TAG_SSL_SEC_TRANS;
+  if (this->tagged_components ().get_component (ssl))
+    {
+      // Both: a TAO server.  The TLS port they name must be the same.
+      CORBA::UShort const port = this->ssl_endpoint_.ssl_component_.port;
+      std::string ports;
+      for (CORBA::ULong i = 0; i < tls.addresses.length (); ++i)
+        {
+          if (tls.addresses[i].port == port)
+            return 0;
+          ports += (ports.empty () ? "" : ",") + std::to_string (tls.addresses[i].port);
+        }
+      TAO::Security::Audit_Logger::instance ()->write (
+        TAO::Security::Audit_Record ("ior", false, TAO::Security::Audit_Reason::IOR_TLS_MISMATCH)
+          .field ("host", this->endpoint_.host ())
+          .field ("ssl_port", std::to_string (port))
+          .field ("tls_sec_trans_ports", ports));
+      return -1;
+    }
+
+  // CSIv2 only: each endpoint takes the TLS address for its host; the
+  // only endpoint of a profile takes the first address, host and all.
+  for (TAO_SSLIOP_Endpoint *ep = &this->ssl_endpoint_; ep != nullptr; ep = ep->next_)
+    {
+      TAO_IIOP_Endpoint *const iiop = ep->iiop_endpoint ();
+      if (iiop == nullptr)
+        continue;
+      CORBA::ULong match = tls.addresses.length ();
+      for (CORBA::ULong i = 0; i < tls.addresses.length (); ++i)
+        if (ACE_OS::strcmp (tls.addresses[i].host_name.in (), iiop->host ()) == 0)
+          {
+            match = i;
+            break;
+          }
+      if (match == tls.addresses.length ())
+        {
+          if (this->count_ > 1)
+            continue;
+          match = 0;
+          iiop->host (tls.addresses[0].host_name.in ());
+        }
+      ep->ssl_component_.port = tls.addresses[match].port;
+      ep->ssl_component_.target_supports = tls.target_supports;
+      ep->ssl_component_.target_requires = tls.target_requires;
+      // A TLS endpoint: never fall back to the plain port.
+      ACE_CLR_BITS (ep->ssl_component_.target_supports, ::Security::NoProtection);
+    }
+  return 0;
+}
+
+int
+TAO_SSLIOP_Profile::decode_ssl (TAO_InputCDR & cdr)
 {
   int r = this->TAO_IIOP_Profile::decode (cdr);
   if (r != 1)
