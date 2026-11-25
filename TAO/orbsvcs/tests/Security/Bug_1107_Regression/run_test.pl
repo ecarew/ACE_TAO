@@ -36,7 +36,12 @@ my $server_conf = $server->LocalFile ("server" . $PerlACE::svcconf_ext);
 my $client_conf = $client->LocalFile ("client" . $PerlACE::svcconf_ext);
 
 
+# Listen on loopback only: the reference then names no host interface.
+# A VPN tunnel address (utun) on the test host cannot be reached from the
+# host itself, and the client, refused by TLS on the first address, would
+# stall on it past the time limit.
 $SV = $server->CreateProcess ("server", "-ORBdebuglevel $debug_level " .
+                              "-ORBListenEndpoints iiop://127.0.0.1: " .
                               "-ORBSvcConf $server_conf " .
                               "-o $server_iorfile");
 $CL = $client->CreateProcess ("client",
