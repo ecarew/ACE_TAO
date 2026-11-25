@@ -3,6 +3,7 @@
 #include "orbsvcs/SSLIOP/SSLIOP_Current.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Deny_List.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Access_List.h"
+#include "orbsvcs/SSLIOP/SSLIOP_SAS.h"
 #include "orbsvcs/Security/Caller.h"
 #include "orbsvcs/Security/SL2_SecurityManager.h"
 #include "orbsvcs/Security/Audit_Logger.h"
@@ -187,15 +188,22 @@ TAO::SSLIOP::Server_Invocation_Interceptor::receive_request (
       TAO::SSLIOP::Current_Impl *const impl = tao_current != nullptr ? tao_current->request_impl () : nullptr;
       if (impl != nullptr)
         {
-          auto caller = std::make_shared<TAO::Security::Caller const> (impl->make_caller ());
+          CORBA::String_var op = ri->operation ();
+
+          // The CSIv2 SAS layer (R16: after TLS and the deny-list, before
+          // the decision) may add an authenticated (GSSUP) principal, or
+          // refuse the request.
+          TAO::Security::Caller record = impl->make_caller ();
+          TAO::SSLIOP::SAS_Target::process (ri, record, true, op.in ());
+
+          auto caller = std::make_shared<TAO::Security::Caller const> (std::move (record));
           impl->caller (caller);
 
           std::string const path = object_path_of (ri);
-          CORBA::String_var op = ri->operation ();
 
           SecurityLevel2::CredentialsList cred_list (1);
           cred_list.length (1);
-          cred_list[0] = new TAO::Security::Caller_Credentials (*caller, "TLS");
+          cred_list[0] = new TAO::Security::Caller_Credentials (*caller, caller->authenticated.empty () ? "TLS" : "TLS+GSSUP");
           CORBA::Boolean const allowed =
             CORBA::is_nil (ad.in ()) ? false : ad->access_allowed_caller (cred_list, path.c_str (), op.in ());
 
@@ -237,6 +245,16 @@ TAO::SSLIOP::Server_Invocation_Interceptor::receive_request (
   // AND
   // (2) the required Quality of Protection is something other
   //     than SecQOPNoProtection (set via -SSLNoProtection)
+  // A SAS context over a plain transport is refused (GSSUP passwords
+  // only travel inside TLS); csiv2 = required refuses a plain request
+  // without one too.
+  if (no_ssl && !this->collocated_)
+    {
+      CORBA::String_var op = ri->operation ();
+      TAO::Security::Caller plain;
+      TAO::SSLIOP::SAS_Target::process (ri, plain, false, op.in ());
+    }
+
   if (no_ssl && this->qop_ != ::Security::SecQOPNoProtection)
     {
       /*

@@ -87,6 +87,14 @@ namespace TAO
       constexpr char const ACCESS_LIST_REJECTED[] = "ACCESS_LIST_REJECTED";
       constexpr char const ACCESS_LIST_SIGNED[] = "ACCESS_LIST_SIGNED";
       constexpr char const IOR_TLS_MISMATCH[] = "IOR_TLS_MISMATCH";
+      constexpr char const SAS_ACCEPTED[] = "SAS_ACCEPTED";
+      constexpr char const SAS_MISSING[] = "SAS_MISSING";
+      constexpr char const SAS_INVALID_EVIDENCE[] = "SAS_INVALID_EVIDENCE";
+      constexpr char const SAS_INVALID_MECH[] = "SAS_INVALID_MECH";
+      constexpr char const SAS_NO_CONTEXT[] = "SAS_NO_CONTEXT";
+      constexpr char const SAS_NO_TLS[] = "SAS_NO_TLS";
+      constexpr char const SAS_AUTHZ_TOKEN_IGNORED[] = "SAS_AUTHZ_TOKEN_IGNORED";
+      constexpr char const GSSUP_FAILED[] = "GSSUP_FAILED";
     }
 
     /**

@@ -6,6 +6,7 @@
 #include "orbsvcs/Security/Self_Check.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Deny_List.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Access_List.h"
+#include "orbsvcs/Security/GSSUP_Verifier.h"
 #include "tao/Security_Mode.h"
 #include "ace/OS_NS_strings.h"
 #include "ace/Read_Buffer.h"
@@ -273,6 +274,23 @@ namespace
         Self_Check::contribute ("csiv2", Self_Check::CHECK_OK,
                                 csiv2 == "off" ? "off: no CSIv2 component in references"
                                                : ("CSIv2 TLS transport advertised (TAG_CSI_SEC_MECH_LIST); csiv2 " + csiv2).c_str ());
+    }
+
+    // GSSUP (CSIv2 client authentication): needs a target name, and a
+    // verifier, or every login is refused.
+    {
+      std::string const gssup = host.get ("csiv2_gssup", "off");
+      std::string const target = host.get ("gssup_target");
+      if (gssup != "off" && gssup != "supported" && gssup != "required")
+        Self_Check::contribute ("csiv2_gssup", bad, ("csiv2_gssup must be off, supported or required, not " + gssup).c_str ());
+      else if (gssup != "off" && host.get ("csiv2", host.mode == TAO_Security_Mode::MODE_PROD ? "supported" : "off") == "off")
+        Self_Check::contribute ("csiv2_gssup", bad, "csiv2_gssup is on but csiv2 is off");
+      else if (gssup != "off" && target.empty ())
+        Self_Check::contribute ("csiv2_gssup", bad, "csiv2_gssup is on but gssup_target is not set");
+      else if (gssup != "off" && TAO::Security::GSSUP_Verifier::installed () == nullptr)
+        Self_Check::contribute ("csiv2_gssup", bad, "csiv2_gssup is on but no GSSUP verifier is installed: every login is refused");
+      else if (gssup != "off")
+        Self_Check::contribute ("csiv2_gssup", Self_Check::CHECK_OK, ("GSSUP " + gssup + ", target " + target).c_str ());
     }
 
     if (host.mode == TAO_Security_Mode::MODE_PROD)

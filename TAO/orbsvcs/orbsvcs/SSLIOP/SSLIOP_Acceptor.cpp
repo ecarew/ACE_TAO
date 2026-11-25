@@ -1,6 +1,7 @@
 #include "orbsvcs/Log_Macros.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Acceptor.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Profile.h"
+#include "orbsvcs/SSLIOP/SSLIOP_SAS.h"
 
 #include "tao/MProfile.h"
 #include "tao/ORB_Core.h"
@@ -160,12 +161,29 @@ TAO::SSLIOP::Acceptor::add_csiv2_component (TAO_SSLIOP_Profile *pfile, size_t fi
   if (!encapsulate (tls, mech.transport_mech.component_data))
     return;
 
-  // No client authentication layer (GSSUP) and no attribute layer
-  // (identity assertion) yet: both advertise nothing.
+  // Client authentication layer: GSSUP when csiv2_gssup is on and the
+  // service has a GSSUP target name.  No attribute layer (identity
+  // assertion) yet.
   mech.as_context_mech.target_supports = 0;
   mech.as_context_mech.target_requires = 0;
   mech.as_context_mech.client_authentication_mech.length (0);
   mech.as_context_mech.target_name.length (0);
+  TAO::SSLIOP::SAS_Target::Config const &sas = TAO::SSLIOP::SAS_Target::config ();
+  if (sas.gssup != 0 && !sas.target.empty ())
+    {
+      mech.as_context_mech.target_supports = CSIIOP::EstablishTrustInClient;
+      if (sas.gssup == 2)
+        {
+          mech.as_context_mech.target_requires = CSIIOP::EstablishTrustInClient;
+          ACE_SET_BITS (mech.target_requires, CSIIOP::EstablishTrustInClient);
+        }
+      std::string const oid = TAO::SSLIOP::SAS_Target::gssup_mech_der ();
+      std::string const name = TAO::SSLIOP::SAS_Target::exported_name (sas.target);
+      mech.as_context_mech.client_authentication_mech.length (static_cast<CORBA::ULong> (oid.size ()));
+      ACE_OS::memcpy (mech.as_context_mech.client_authentication_mech.get_buffer (), oid.data (), oid.size ());
+      mech.as_context_mech.target_name.length (static_cast<CORBA::ULong> (name.size ()));
+      ACE_OS::memcpy (mech.as_context_mech.target_name.get_buffer (), name.data (), name.size ());
+    }
   mech.sas_context_mech.target_supports = 0;
   mech.sas_context_mech.target_requires = 0;
   mech.sas_context_mech.privilege_authorities.length (0);

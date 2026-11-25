@@ -75,6 +75,27 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
   JacORB), and refuses a profile whose two components name different TLS
   ports (IOR_TLS_MISMATCH). New test orbsvcs/tests/Security/CSIv2_IOR.
 
+. SSLIOP servers implement the CSIv2 Security Attribute Service (SAS),
+  stateless, over TLS. A request's SAS service context is decoded:
+  EstablishContext with a GSSUP client authentication token is checked
+  against the GSSUP target name (security.conf gssup_target) and the
+  installed TAO::Security::GSSUP_Verifier, and answered with
+  CompleteEstablishContext (context_stateful false); the user (user@realm)
+  becomes the request's effective principal for the access decision and
+  for the servant. Everything else gets a ContextError and NO_PERMISSION
+  per CORBA 3.3 Part 2 10.3.5: a wrong password, unknown user or wrong
+  target major 1 (with the GSSUP error UNSPECIFIED, so they are
+  indistinguishable), a MessageInContext major 4 (no contexts are kept),
+  identity assertion or another mechanism major 2. Authorization tokens are
+  ignored. csiv2 = required, or csiv2_gssup = required, refuses a request
+  without a SAS context. With csiv2_gssup = supported or required the
+  references advertise GSSUP in their authentication layer. Audit reasons
+  SAS_ACCEPTED (with audit_grants), SAS_MISSING, SAS_INVALID_EVIDENCE,
+  SAS_INVALID_MECH, SAS_NO_CONTEXT, SAS_NO_TLS, SAS_AUTHZ_TOKEN_IGNORED,
+  GSSUP_FAILED; passwords are never logged. Prod refuses csiv2_gssup without
+  a target name or a verifier. Tokens framed with JacORB's non-DER length
+  are accepted. New test orbsvcs/tests/Security/SAS.
+
 . SSLIOP never negotiates below TLS 1.2: SSL 3.0, TLS 1.0 and TLS 1.1 are
   refused in every mode, whatever -SSLVersionList says (asking for them
   logs a warning). The startup self-check reports it (tls_versions).

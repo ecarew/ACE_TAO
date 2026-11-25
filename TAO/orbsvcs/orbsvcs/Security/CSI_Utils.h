@@ -16,6 +16,7 @@
 // the declared types/variables are not meant to be used outside TAO's
 // CSIv2 implementation.
 
+#include "orbsvcs/Security/security_export.h"
 #include "tao/orbconf.h"
 #include "tao/Versioned_Namespace.h"
 
@@ -37,14 +38,14 @@ namespace TAO
   namespace CSI_Utils
   {
     /// Populate given IOP::ServiceContext with given CSI::SASContextBody.
-    void create_sas_service_context (CSI::SASContextBody const & sas_context,
+    TAO_Security_Export void create_sas_service_context (CSI::SASContextBody const & sas_context,
                                      IOP::ServiceContext & sc);
 
     /// Extract CSI::SASContextBody from given IOP::ServiceContext.
     /**
      * @return Success == true, Failure == false.
      */
-    bool extract_sas_service_context (IOP::ServiceContext const & sc,
+    TAO_Security_Export bool extract_sas_service_context (IOP::ServiceContext const & sc,
                                       CSI::SASContextBody & sas_context);
   }
 }
