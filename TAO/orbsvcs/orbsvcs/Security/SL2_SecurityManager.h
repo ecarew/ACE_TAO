@@ -52,7 +52,7 @@ namespace TAO
      *
      * @brief
      */
-    class AccessDecision
+    class TAO_Security_Export AccessDecision
       : public virtual TAO::SL2::AccessDecision,
   public virtual ::CORBA::LocalObject
     {
