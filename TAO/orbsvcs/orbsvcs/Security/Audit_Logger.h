@@ -31,6 +31,8 @@
 
 #include "tao/Versioned_Namespace.h"
 #include "ace/Time_Value.h"
+#include "tao/orbconf.h"
+#include "ace/Synch_Traits.h"
 #include "ace/Thread_Mutex.h"
 
 #include <string>
@@ -274,7 +276,7 @@ namespace TAO
 
       static std::string source_key (Audit_Record const &record);
 
-      mutable ACE_Thread_Mutex lock_;
+      mutable TAO_SYNCH_MUTEX lock_;
       Options options_;
 
       enum Sink_Kind { SINK_SYSLOG, SINK_UNIX, SINK_TCP, SINK_STDERR };

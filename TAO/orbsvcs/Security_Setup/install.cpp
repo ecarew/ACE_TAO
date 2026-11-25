@@ -22,6 +22,7 @@
 #include "ace/OS_NS_unistd.h"
 #include "ace/Process.h"
 
+#include <cctype>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -309,7 +310,7 @@ setup_install (int argc, ACE_TCHAR *argv[], char const *self)
   if (port <= 0 || port > 65535)
     return fail ("install: --port must be 1-65535");
   for (char const c : prefix)
-    if (!(ACE_OS::ace_isalnum (c) || c == '.' || c == '-' || c == '_'))
+    if (!(::isalnum (static_cast<unsigned char> (c)) || c == '.' || c == '-' || c == '_'))
       return fail ("install: --label-prefix may contain only letters, digits, '.', '-' and '_'");
 
   Paths const p = make_paths (root);

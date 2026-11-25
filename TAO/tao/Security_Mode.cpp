@@ -11,6 +11,8 @@
 #include "ace/OS_NS_string.h"
 #include "ace/OS_NS_sys_stat.h"
 #include "ace/OS_NS_unistd.h"
+#include "tao/orbconf.h"
+#include "ace/Synch_Traits.h"
 #include "ace/Thread_Mutex.h"
 
 #if !defined (ACE_LACKS_UNIX_SYSLOG)
@@ -32,10 +34,10 @@ namespace
     std::string detail;
   };
 
-  ACE_Thread_Mutex &
+  TAO_SYNCH_MUTEX &
   reports_lock ()
   {
-    static ACE_Thread_Mutex lock;
+    static TAO_SYNCH_MUTEX lock;
     return lock;
   }
 
@@ -210,7 +212,7 @@ TAO_Security_Mode::report_plugin (TAO_ORB_Core *orb_core,
                                   bool passed,
                                   char const *detail)
 {
-  ACE_GUARD (ACE_Thread_Mutex, guard, reports_lock ());
+  ACE_GUARD (TAO_SYNCH_MUTEX, guard, reports_lock ());
   Plugin_Report &r = reports ()[orb_core];
   r.plugin = plugin ? plugin : "unknown";
   r.passed = passed;
@@ -220,7 +222,7 @@ TAO_Security_Mode::report_plugin (TAO_ORB_Core *orb_core,
 void
 TAO_Security_Mode::prod_violation (char const *reason)
 {
-  ACE_GUARD (ACE_Thread_Mutex, guard, reports_lock ());
+  ACE_GUARD (TAO_SYNCH_MUTEX, guard, reports_lock ());
   std::string &v = violations ();
   if (!v.empty ())
     v += "; ";
@@ -232,7 +234,7 @@ TAO_Security_Mode::begin (TAO_ORB_Core *orb_core)
 {
   // A report left by an ORB core that failed to initialize at the same
   // address must not count for this one.
-  ACE_GUARD (ACE_Thread_Mutex, guard, reports_lock ());
+  ACE_GUARD (TAO_SYNCH_MUTEX, guard, reports_lock ());
   reports ().erase (orb_core);
 }
 
@@ -245,7 +247,7 @@ TAO_Security_Mode::enforce (TAO_ORB_Core *orb_core)
   bool reported = false;
   std::string violation;
   {
-    ACE_GUARD (ACE_Thread_Mutex, guard, reports_lock ());
+    ACE_GUARD (TAO_SYNCH_MUTEX, guard, reports_lock ());
     violation = violations ();
     auto const i = reports ().find (orb_core);
     if (i != reports ().end ())
@@ -267,7 +269,7 @@ TAO_Security_Mode::enforce (TAO_ORB_Core *orb_core)
         // These may run without the security plugin, so say so here,
         // once per process, rather than rely on the plugin's banner.
         static bool announced = false;
-        ACE_GUARD (ACE_Thread_Mutex, guard, reports_lock ());
+        ACE_GUARD (TAO_SYNCH_MUTEX, guard, reports_lock ());
         if (!announced)
           {
             announced = true;

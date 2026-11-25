@@ -3,6 +3,7 @@
 
 #include "orbsvcs/Security/Audit_Logger.h"
 #include "tao/Security_Mode.h"
+#include "tao/orbconf.h"
 
 #include "ace/Guard_T.h"
 #include "ace/OS_NS_stdio.h"
@@ -299,7 +300,7 @@ TAO::SSLIOP::Deny_List::load (std::string &summary)
   summary = "version " + std::to_string (c.version) + " issued " + c.issued + ", "
             + std::to_string (c.serials.size ()) + " serial(s), " + std::to_string (c.spiffe.size ())
             + " SPIFFE ID(s)";
-  ACE_GUARD_RETURN (ACE_Thread_Mutex, guard, this->lock_, false);
+  ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, guard, this->lock_, false);
   this->current_ = std::make_shared<Content const> (std::move (c));
   this->last_check_ = ACE_OS::time (nullptr);
   this->stamp_ = stamp;
@@ -313,7 +314,7 @@ TAO::SSLIOP::Deny_List::refresh ()
     return;
   time_t const now = ACE_OS::time (nullptr);
   {
-    ACE_GUARD (ACE_Thread_Mutex, guard, this->lock_);
+    ACE_GUARD (TAO_SYNCH_MUTEX, guard, this->lock_);
     if (now - this->last_check_ < this->reload_seconds_)
       return;
     this->last_check_ = now;
@@ -322,7 +323,7 @@ TAO::SSLIOP::Deny_List::refresh ()
   if (stamp.compare (0, 2, "-;") == 0)
     return;   // no file: keep the last good list
   {
-    ACE_GUARD (ACE_Thread_Mutex, guard, this->lock_);
+    ACE_GUARD (TAO_SYNCH_MUTEX, guard, this->lock_);
     if (stamp == this->stamp_)
       return;
     this->stamp_ = stamp;
@@ -351,7 +352,7 @@ TAO::SSLIOP::Deny_List::refresh ()
   long const version = c.version;
   std::string const issued = c.issued;
   {
-    ACE_GUARD (ACE_Thread_Mutex, guard, this->lock_);
+    ACE_GUARD (TAO_SYNCH_MUTEX, guard, this->lock_);
     this->current_ = std::make_shared<Content const> (std::move (c));
   }
   Audit_Logger::instance ()->write (
@@ -370,7 +371,7 @@ TAO::SSLIOP::Deny_List::check (X509 *peer)
   this->refresh ();
   std::shared_ptr<Content const> c;
   {
-    ACE_GUARD_RETURN (ACE_Thread_Mutex, guard, this->lock_, "");
+    ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, guard, this->lock_, "");
     c = this->current_;
   }
   if (!c)
@@ -387,7 +388,7 @@ TAO::SSLIOP::Deny_List::check (X509 *peer)
 long
 TAO::SSLIOP::Deny_List::age_days () const
 {
-  ACE_GUARD_RETURN (ACE_Thread_Mutex, guard, this->lock_, -1);
+  ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, guard, this->lock_, -1);
   if (!this->current_)
     return -1;
   return static_cast<long> ((ACE_OS::time (nullptr) - this->current_->issued_time) / 86400);
@@ -396,7 +397,7 @@ TAO::SSLIOP::Deny_List::age_days () const
 long
 TAO::SSLIOP::Deny_List::version () const
 {
-  ACE_GUARD_RETURN (ACE_Thread_Mutex, guard, this->lock_, 0);
+  ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, guard, this->lock_, 0);
   return this->current_ ? this->current_->version : 0;
 }
 

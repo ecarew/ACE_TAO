@@ -47,6 +47,8 @@
 #endif /* ACE_LACKS_PRAGMA_ONCE */
 
 #include "tao/Versioned_Namespace.h"
+#include "tao/orbconf.h"
+#include "ace/Synch_Traits.h"
 #include "ace/Thread_Mutex.h"
 
 #include <openssl/evp.h>
@@ -137,7 +139,7 @@ namespace TAO
       long reload_seconds_ = 30;
       long max_age_days_ = 7;
 
-      mutable ACE_Thread_Mutex lock_;
+      mutable TAO_SYNCH_MUTEX lock_;
       std::shared_ptr<Content const> current_;
       time_t last_check_ = 0;
       /// Modification time and size of the list and of its signature

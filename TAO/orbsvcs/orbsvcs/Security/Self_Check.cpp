@@ -19,6 +19,8 @@
 #include "ace/OS_NS_sys_time.h"
 #include "ace/OS_NS_unistd.h"
 #include "ace/Reactor.h"
+#include "tao/orbconf.h"
+#include "ace/Synch_Traits.h"
 #include "ace/Thread_Mutex.h"
 
 #include <atomic>
@@ -54,10 +56,10 @@ namespace
   ACE_Time_Value const TIME_ALARM_REPEAT (300);
   ACE_Time_Value const TEST_REMINDER (3600);
 
-  ACE_Thread_Mutex &
+  TAO_SYNCH_MUTEX &
   state_lock ()
   {
-    static ACE_Thread_Mutex lock;
+    static TAO_SYNCH_MUTEX lock;
     return lock;
   }
 
@@ -310,14 +312,14 @@ namespace TAO
     void
     Self_Check::contribute (char const *name, Status status, char const *detail)
     {
-      ACE_GUARD (ACE_Thread_Mutex, guard, state_lock ());
+      ACE_GUARD (TAO_SYNCH_MUTEX, guard, state_lock ());
       contributions ().push_back ({name ? name : "unnamed", status, detail ? detail : ""});
     }
 
     void
     Self_Check::banner_field (char const *key, char const *value)
     {
-      ACE_GUARD (ACE_Thread_Mutex, guard, state_lock ());
+      ACE_GUARD (TAO_SYNCH_MUTEX, guard, state_lock ());
       for (auto &f : banner_fields ())
         if (f.first == key)
           {
@@ -330,7 +332,7 @@ namespace TAO
     std::vector<Self_Check::Result>
     Self_Check::last_results ()
     {
-      ACE_GUARD_RETURN (ACE_Thread_Mutex, guard, state_lock (), std::vector<Result> ());
+      ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, guard, state_lock (), std::vector<Result> ());
       return last ();
     }
 
@@ -457,16 +459,23 @@ namespace TAO
       // memory is that data at rest.
       if (prod)
         {
+#if defined (ACE_LACKS_RLIMIT)
+          // No resource limits here (Windows): crash dumps are governed by
+          // Windows Error Reporting, outside the process.
+          results.push_back ({"core_dumps", CHECK_WARN,
+                              "not controlled by the service on this platform (configure crash dumps for the host)"});
+#else
           rlimit rl;
           rl.rlim_cur = 0;
           rl.rlim_max = 0;
           bool ok = ACE_OS::setrlimit (RLIMIT_CORE, &rl) == 0;
-#if defined (ACE_LINUX)
+# if defined (ACE_LINUX)
           ok = ::prctl (PR_SET_DUMPABLE, 0, 0, 0, 0) == 0 && ok;
-#endif
+# endif
           results.push_back ({"core_dumps", ok ? CHECK_OK : CHECK_FAIL,
                               ok ? "turned off" : std::string ("cannot turn off core dumps: ")
                                                   + ACE_OS::strerror (errno)});
+#endif /* ACE_LACKS_RLIMIT */
         }
       else
         results.push_back ({"core_dumps", CHECK_OK, "left as configured (test mode)"});
@@ -499,7 +508,7 @@ namespace TAO
 
       std::vector<std::pair<std::string, std::string>> fields;
       {
-        ACE_GUARD_RETURN (ACE_Thread_Mutex, guard, state_lock (), false);
+        ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, guard, state_lock (), false);
         for (auto const &c : contributions ())
           results.push_back (c);
         fields = banner_fields ();
@@ -541,7 +550,7 @@ namespace TAO
                        .text (failures.empty () ? banner.c_str () : failures.c_str ()));
 
       {
-        ACE_GUARD_RETURN (ACE_Thread_Mutex, guard, state_lock (), false);
+        ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, guard, state_lock (), false);
         last () = results;
       }
 

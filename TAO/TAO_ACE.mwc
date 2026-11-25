@@ -19,4 +19,8 @@ workspace {
     orbsvcs/examples
     orbsvcs/DevGuideExamples
   }
+  // ace-tao-setup is POSIX only (launchd/systemd, accounts, file modes).
+  exclude(prop:windows) {
+    orbsvcs/Security_Setup
+  }
 }

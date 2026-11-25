@@ -2,6 +2,7 @@
 #include "orbsvcs/Security/Audit_Logger.h"
 
 #include "tao/Security_Mode.h"
+#include "tao/orbconf.h"
 
 #include "ace/ACE.h"
 #include "ace/Guard_T.h"
@@ -16,7 +17,7 @@
 #include "ace/OS_NS_unistd.h"
 #include "ace/SOCK_Connector.h"
 #include "ace/SOCK_Stream.h"
-#include "ace/UNIX_Addr.h"
+#include "ace/os_include/sys/os_un.h"
 #include "ace/os_include/os_netdb.h"
 
 #include <algorithm>
@@ -248,7 +249,7 @@ namespace TAO
     {
       std::vector<Alarm> alarms;
       {
-        ACE_GUARD (ACE_Thread_Mutex, guard, this->lock_);
+        ACE_GUARD (TAO_SYNCH_MUTEX, guard, this->lock_);
         this->sweep_i (ACE_OS::gettimeofday (), true, alarms);
         this->close_i ();
       }
@@ -309,7 +310,7 @@ namespace TAO
     {
       std::vector<Alarm> alarms;
       {
-        ACE_GUARD (ACE_Thread_Mutex, guard, this->lock_);
+        ACE_GUARD (TAO_SYNCH_MUTEX, guard, this->lock_);
         this->close_i ();
         this->options_ = options;
         this->buckets_.clear ();
@@ -360,7 +361,7 @@ namespace TAO
     Audit_Logger::Options
     Audit_Logger::options () const
     {
-      ACE_GUARD_RETURN (ACE_Thread_Mutex, guard, this->lock_, Options ());
+      ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, guard, this->lock_, Options ());
       return this->options_;
     }
 
@@ -369,7 +370,7 @@ namespace TAO
     {
       std::vector<Alarm> alarms;
       {
-        ACE_GUARD (ACE_Thread_Mutex, guard, this->lock_);
+        ACE_GUARD (TAO_SYNCH_MUTEX, guard, this->lock_);
         this->write_i (record, alarms);
       }
       this->notify (alarms);
@@ -380,7 +381,7 @@ namespace TAO
     {
       std::vector<Alarm> alarms;
       {
-        ACE_GUARD (ACE_Thread_Mutex, guard, this->lock_);
+        ACE_GUARD (TAO_SYNCH_MUTEX, guard, this->lock_);
         ACE_Time_Value const now = ACE_OS::gettimeofday ();
         this->sweep_i (now, false, alarms);
         if (!this->healthy_ && now >= this->next_retry_)
@@ -404,7 +405,7 @@ namespace TAO
       std::vector<Alarm> alarms;
       bool ok = false;
       {
-        ACE_GUARD_RETURN (ACE_Thread_Mutex, guard, this->lock_, false);
+        ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, guard, this->lock_, false);
         // Bypass the retry delay: a self-check wants the current answer.
         this->next_retry_ = ACE_Time_Value::zero;
         Audit_Record probe ("audit", true, Audit_Reason::AUDIT_SELF_TEST);
@@ -417,28 +418,28 @@ namespace TAO
     bool
     Audit_Logger::healthy () const
     {
-      ACE_GUARD_RETURN (ACE_Thread_Mutex, guard, this->lock_, false);
+      ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, guard, this->lock_, false);
       return this->healthy_;
     }
 
     unsigned long
     Audit_Logger::fallback_count () const
     {
-      ACE_GUARD_RETURN (ACE_Thread_Mutex, guard, this->lock_, 0);
+      ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, guard, this->lock_, 0);
       return this->fallback_count_;
     }
 
     void
     Audit_Logger::add_alarm_callback (Alarm_Callback cb, void *arg)
     {
-      ACE_GUARD (ACE_Thread_Mutex, guard, this->lock_);
+      ACE_GUARD (TAO_SYNCH_MUTEX, guard, this->lock_);
       this->callbacks_.emplace_back (cb, arg);
     }
 
     void
     Audit_Logger::remove_alarm_callback (Alarm_Callback cb, void *arg)
     {
-      ACE_GUARD (ACE_Thread_Mutex, guard, this->lock_);
+      ACE_GUARD (TAO_SYNCH_MUTEX, guard, this->lock_);
       for (auto i = this->callbacks_.begin (); i != this->callbacks_.end (); ++i)
         if (i->first == cb && i->second == arg)
           {
@@ -771,9 +772,18 @@ namespace TAO
           timeval tv = SEND_TIMEOUT;
           ACE_OS::setsockopt (h, SOL_SOCKET, SO_SNDTIMEO,
                               reinterpret_cast<char const *> (&tv), sizeof tv);
-          ACE_UNIX_Addr const addr (this->target_.c_str ());
-          if (ACE_OS::connect (h, static_cast<sockaddr *> (addr.get_addr ()),
-                               addr.get_size ()) == -1)
+          // A plain sockaddr_un: ACE_UNIX_Addr is not in the ACE for TAO subset.
+          sockaddr_un addr;
+          ACE_OS::memset (&addr, 0, sizeof addr);
+          addr.sun_family = AF_UNIX;
+          if (this->target_.size () >= sizeof addr.sun_path)
+            {
+              this->last_error_ = ENAMETOOLONG;
+              ACE_OS::closesocket (h);
+              return false;
+            }
+          ACE_OS::strcpy (addr.sun_path, this->target_.c_str ());
+          if (ACE_OS::connect (h, reinterpret_cast<sockaddr *> (&addr), sizeof addr) == -1)
             {
               this->last_error_ = errno;
               ACE_OS::closesocket (h);
@@ -859,7 +869,7 @@ namespace TAO
         return;
       std::vector<std::pair<Alarm_Callback, void *>> callbacks;
       {
-        ACE_GUARD (ACE_Thread_Mutex, guard, this->lock_);
+        ACE_GUARD (TAO_SYNCH_MUTEX, guard, this->lock_);
         callbacks = this->callbacks_;
       }
       for (auto const &a : alarms)

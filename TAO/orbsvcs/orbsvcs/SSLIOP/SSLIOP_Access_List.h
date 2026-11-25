@@ -55,6 +55,8 @@
 #endif /* ACE_LACKS_PRAGMA_ONCE */
 
 #include "orbsvcs/Security/Caller.h"
+#include "tao/orbconf.h"
+#include "ace/Synch_Traits.h"
 #include "ace/Thread_Mutex.h"
 
 #include <ctime>
@@ -128,7 +130,7 @@ namespace TAO
       std::string signer_pin_;
       long reload_seconds_ = 30;
 
-      mutable ACE_Thread_Mutex lock_;
+      mutable TAO_SYNCH_MUTEX lock_;
       std::shared_ptr<Content const> current_;
       time_t last_check_ = 0;
       std::string stamp_;
