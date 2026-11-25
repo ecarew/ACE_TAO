@@ -95,6 +95,11 @@ namespace TAO
       constexpr char const SAS_NO_TLS[] = "SAS_NO_TLS";
       constexpr char const SAS_AUTHZ_TOKEN_IGNORED[] = "SAS_AUTHZ_TOKEN_IGNORED";
       constexpr char const GSSUP_FAILED[] = "GSSUP_FAILED";
+      constexpr char const GSSUP_LOCKED[] = "GSSUP_LOCKED";
+      constexpr char const GSSUP_RATE_LIMITED[] = "GSSUP_RATE_LIMITED";
+      constexpr char const GSSUP_STORE_LOADED[] = "GSSUP_STORE_LOADED";
+      constexpr char const GSSUP_STORE_REJECTED[] = "GSSUP_STORE_REJECTED";
+      constexpr char const GSSUP_USER_CHANGED[] = "GSSUP_USER_CHANGED";
     }
 
     /**

@@ -96,6 +96,24 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
   a target name or a verifier. Tokens framed with JacORB's non-DER length
   are accepted. New test orbsvcs/tests/Security/SAS.
 
+. GSSUP password store. With security.conf gssup_store set, SSLIOP checks
+  GSSUP logins against a local file of scrypt hashes (OpenSSL 3 EVP_KDF),
+  maintained with "ace-tao-setup user add|passwd|lock|unlock|remove|list"
+  (passwords from the terminal or --password-stdin, never the command line;
+  at least 12 characters; the file is rewritten atomically with mode 0600).
+  The store is re-read when it changes. It is unusable, and every login is
+  refused, when it cannot be parsed or, in prod, when it is readable by
+  others or not owned by the service; the startup self-check reports it
+  (gssup_store). Guessing limits: gssup_max_failures failures (10) within
+  gssup_failure_window seconds (900) lock a user for gssup_lockout seconds
+  (1800); gssup_source_max_failures (50) do the same for a host. A locked
+  user, an unknown user and a wrong password get the same answer and cost
+  the same scrypt. Audit reasons GSSUP_LOCKED, GSSUP_RATE_LIMITED,
+  GSSUP_STORE_LOADED, GSSUP_STORE_REJECTED, GSSUP_USER_CHANGED.
+  TAO::Security::GSSUP_Verifier::verify now takes the caller's source
+  address and returns why a login failed. New test
+  orbsvcs/tests/Security/GSSUP_Store.
+
 . SSLIOP never negotiates below TLS 1.2: SSL 3.0, TLS 1.0 and TLS 1.1 are
   refused in every mode, whatever -SSLVersionList says (asking for them
   logs a warning). The startup self-check reports it (tls_versions).

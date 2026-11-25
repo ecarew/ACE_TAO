@@ -7,6 +7,7 @@
 #include "orbsvcs/SSLIOP/SSLIOP_Deny_List.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Access_List.h"
 #include "orbsvcs/Security/GSSUP_Verifier.h"
+#include "orbsvcs/SSLIOP/SSLIOP_GSSUP_Store.h"
 #include "tao/Security_Mode.h"
 #include "ace/OS_NS_strings.h"
 #include "ace/Read_Buffer.h"
@@ -288,9 +289,25 @@ namespace
       else if (gssup != "off" && target.empty ())
         Self_Check::contribute ("csiv2_gssup", bad, "csiv2_gssup is on but gssup_target is not set");
       else if (gssup != "off" && TAO::Security::GSSUP_Verifier::installed () == nullptr)
-        Self_Check::contribute ("csiv2_gssup", bad, "csiv2_gssup is on but no GSSUP verifier is installed: every login is refused");
+        Self_Check::contribute ("csiv2_gssup", bad,
+                                "csiv2_gssup is on but no GSSUP verifier is installed (set gssup_store): every login is refused");
       else if (gssup != "off")
         Self_Check::contribute ("csiv2_gssup", Self_Check::CHECK_OK, ("GSSUP " + gssup + ", target " + target).c_str ());
+
+      // The password store (R18): unusable in prod is a failure, since
+      // it refuses every login.
+      TAO::SSLIOP::GSSUP_Store *const store = TAO::SSLIOP::GSSUP_Store::instance ();
+      if (store->configured ())
+        {
+          std::string summary;
+          if (TAO::Security::GSSUP_Verifier::installed () != store)
+            Self_Check::contribute ("gssup_store", Self_Check::CHECK_WARN,
+                                    "gssup_store is ignored: the application installed its own GSSUP verifier");
+          else if (!store->load (summary))
+            Self_Check::contribute ("gssup_store", bad, ("GSSUP store unusable, every login refused: " + summary).c_str ());
+          else
+            Self_Check::contribute ("gssup_store", Self_Check::CHECK_OK, (store->path () + ": " + summary).c_str ());
+        }
     }
 
     if (host.mode == TAO_Security_Mode::MODE_PROD)
@@ -1167,6 +1184,12 @@ TAO::SSLIOP::Protocol_Factory::init (int argc, ACE_TCHAR* argv[])
                       ACE_TEXT ("TAO (%P|%t) - SSLIOP cannot set TLS 1.2 as the minimum version\n")));
       return -1;
     }
+
+  // The GSSUP password store is the default verifier when security.conf
+  // names one and the application has not installed its own.
+  if (TAO::SSLIOP::GSSUP_Store::instance ()->configured ()
+      && TAO::Security::GSSUP_Verifier::installed () == nullptr)
+    TAO::Security::GSSUP_Verifier::install (TAO::SSLIOP::GSSUP_Store::instance ());
 
   report_mode_checks (certificate_path.in (), certificate_type,
                       private_key_path.in (), private_key_type, password_source,

@@ -2,6 +2,8 @@
 // "beta" in POA "Who", whoami() reporting the caller from
 // SecurityLevel3::SecurityCurrent) with a test GSSUP verifier installed
 // before ORB_init: user "alice", password "wonderland" (test data only).
+// With SAS_TEST_NO_VERIFIER set it installs none, so a gssup_store in
+// security.conf supplies the verifier (the GSSUP_Store test).
 // Writes alpha.ior and beta.ior into the directory given with -d.
 
 #include "TestS.h"
@@ -21,14 +23,14 @@ namespace
   class Test_Verifier : public TAO::Security::GSSUP_Verifier
   {
   public:
-    bool
+    Result
     verify (std::string const &user, std::string const &password, std::string const &target,
-            std::string &detail) override
+            std::string const &, std::string &detail) override
     {
       if (user == "alice" && password == "wonderland" && target == "@lab.test")
-        return true;
+        return ACCEPTED;
       detail = user == "alice" ? "wrong password" : "unknown user";
-      return false;
+      return REJECTED;
     }
   };
   std::string

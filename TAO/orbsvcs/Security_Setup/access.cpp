@@ -70,17 +70,6 @@ namespace
   using PKEY = std::unique_ptr<EVP_PKEY, Free_PKEY>;
 
   std::string
-  now_iso ()
-  {
-    time_t const t = ACE_OS::time (nullptr);
-    struct tm tm_buf;
-    char buf[32];
-    ACE_OS::gmtime_r (&t, &tm_buf);
-    ACE_OS::strftime (buf, sizeof buf, "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
-    return buf;
-  }
-
-  std::string
   lower (std::string s)
   {
     for (char &c : s)
@@ -151,7 +140,7 @@ namespace
               }
             else if (key == "issued")
               {
-                line = "issued " + now_iso ();
+                line = "issued " + setup_iso_time ();
                 saw_issued = true;
               }
           }

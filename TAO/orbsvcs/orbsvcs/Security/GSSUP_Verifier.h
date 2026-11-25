@@ -38,15 +38,29 @@ namespace TAO
     public:
       virtual ~GSSUP_Verifier ();
 
+      /// The outcome of one login.  Every outcome but ACCEPTED is the
+      /// same refusal on the wire (ContextError 1, GSSUP UNSPECIFIED);
+      /// the difference is only for the audit record.
+      enum Result
+      {
+        ACCEPTED,
+        REJECTED,       ///< wrong password, unknown user or user locked by an administrator
+        LOCKED,         ///< too many recent failures for this user
+        RATE_LIMITED,   ///< too many recent failures from this source
+        UNAVAILABLE     ///< the verifier cannot check (e.g. its store is unusable)
+      };
+
       /**
-       * True if @a password is right for @a user at @a target (the
-       * service's GSSUP target name, e.g. "@lab.example").  On false,
-       * @a detail says why, for the audit record (never the password).
+       * Checks @a password for @a user at @a target (the service's GSSUP
+       * target name, e.g. "@lab.example"), from @a source (the caller's
+       * "host:port").  @a detail says why on refusal, for the audit
+       * record; it never holds the password.
        */
-      virtual bool verify (std::string const &user,
-                           std::string const &password,
-                           std::string const &target,
-                           std::string &detail) = 0;
+      virtual Result verify (std::string const &user,
+                             std::string const &password,
+                             std::string const &target,
+                             std::string const &source,
+                             std::string &detail) = 0;
 
       /// Installs the process-wide verifier (not owned; null removes it).
       static void install (GSSUP_Verifier *verifier);

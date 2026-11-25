@@ -7,6 +7,7 @@
 #define ACE_TAO_SETUP_KEYS_H
 
 #include "ace/config-lite.h"
+#include "ace/os_include/os_time.h"
 
 #include <map>
 #include <string>
@@ -22,6 +23,8 @@ int setup_denylist (int argc, ACE_TCHAR *argv[]);
 
 /// access sign|check|test ... (access.cpp)
 int setup_access (int argc, ACE_TCHAR *argv[]);
+/// user add|passwd|lock|unlock|remove|list ... (user.cpp)
+int setup_user (int argc, ACE_TCHAR *argv[]);
 
 // Shared by keys.cpp, denylist.cpp and access.cpp.
 typedef struct evp_pkey_st EVP_PKEY;
@@ -48,5 +51,7 @@ void setup_audit (char const *reason, std::map<std::string, std::string> const &
 
 /// A value from the security configuration, or @a fallback.
 std::string setup_conf_get (char const *key, char const *fallback = "");
+/// @a t (0: now) as UTC YYYY-MM-DDTHH:MM:SSZ.
+std::string setup_iso_time (time_t t = 0);
 
 #endif /* ACE_TAO_SETUP_KEYS_H */

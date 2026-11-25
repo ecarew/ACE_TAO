@@ -96,17 +96,6 @@ namespace
     return ACE_OS::stat (path.c_str (), &st) == 0;
   }
 
-  std::string
-  now_iso ()
-  {
-    time_t const t = ACE_OS::time (nullptr);
-    struct tm tm_buf;
-    char buf[32];
-    ACE_OS::gmtime_r (&t, &tm_buf);
-    ACE_OS::strftime (buf, sizeof buf, "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
-    return buf;
-  }
-
   /// Base64 signature (SHA-256) of @a text with @a key, where the key lives.
   bool
   sign (EVP_PKEY *key, std::string const &text, std::string &b64, std::string &error)
@@ -297,7 +286,7 @@ namespace
         return EXIT_OK;
       }
     c.version += 1;
-    c.issued = now_iso ();
+    c.issued = setup_iso_time ();
     return publish (o, key.get (), serialize (c), c, cmd);
   }
 

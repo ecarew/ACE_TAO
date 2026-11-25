@@ -7,5 +7,6 @@ project(Security_Setup) : orbsvcsexe, install, security, ssl, ssliop {
     keys.cpp
     denylist.cpp
     access.cpp
+    user.cpp
   }
 }

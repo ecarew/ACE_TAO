@@ -94,7 +94,8 @@ namespace
     "  cert request --key SPEC --token-file F --out PEM ... | cert renew --key SPEC --cert PEM ...\n"
     "  denylist add|remove|sign|check|pin ...\n"
     "  access sign|check|test ...\n"
-    "  (key, cert, denylist or access alone prints their options)\n"
+    "  user add|passwd|lock|unlock|remove|list ...\n"
+    "  (key, cert, denylist, access or user alone prints their options)\n"
     "  (check --gate exits 2 only on failures, 0 otherwise)\n";
 
   int
@@ -133,17 +134,6 @@ namespace
   host ()
   {
     return TAO_Security_Mode::read (conf_path.c_str (), marker_path.c_str ());
-  }
-
-  std::string
-  now_iso ()
-  {
-    time_t const t = ACE_OS::time (nullptr);
-    struct tm tm_buf;
-    char buf[32];
-    ACE_OS::gmtime_r (&t, &tm_buf);
-    ACE_OS::strftime (buf, sizeof buf, "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
-    return buf;
   }
 
   bool
@@ -642,7 +632,7 @@ namespace
     if (lines.empty ())
       {
         lines.push_back ("# ACE/TAO host security configuration (see tao/Security_Mode.h).");
-        lines.push_back ("# Written by ace-tao-setup init on " + now_iso () + ".");
+        lines.push_back ("# Written by ace-tao-setup init on " + setup_iso_time () + ".");
       }
     set_key (lines, "mode", mode);
     if (!found.empty ())
@@ -743,7 +733,7 @@ namespace
 
     std::string const sum = Self_Check::sha256_file (conf_path.c_str ());
     std::string error;
-    if (!write_atomic (marker_path, "enrolled " + now_iso () + " uid "
+    if (!write_atomic (marker_path, "enrolled " + setup_iso_time () + " uid "
                        + std::to_string (static_cast<long> (ACE_OS::getuid ())) + " conf " + conf_path
                        + " sha256 " + sum + "\n", 0644, error))
       return refuse (error);
@@ -777,6 +767,18 @@ namespace
     ACE_OS::printf ("Unenrolled: %s removed.\n", marker_path.c_str ());
     return EXIT_OK;
   }
+}
+
+std::string
+setup_iso_time (time_t t)
+{
+  if (t == 0)
+    t = ACE_OS::time (nullptr);
+  struct tm tm_buf;
+  char buf[32] = "";
+  if (ACE_OS::gmtime_r (&t, &tm_buf) != nullptr)
+    ACE_OS::strftime (buf, sizeof buf, "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
+  return buf;
 }
 
 void
@@ -848,6 +850,8 @@ ACE_TMAIN (int argc, ACE_TCHAR *argv[])
     return setup_denylist (rest, args);
   if (cmd == "access")
     return setup_access (rest, args);
+  if (cmd == "user")
+    return setup_user (rest, args);
   if (cmd == "run")
     return setup_run (rest, args, prog, conf_path.c_str ());
   return usage (("unknown command " + cmd).c_str ());

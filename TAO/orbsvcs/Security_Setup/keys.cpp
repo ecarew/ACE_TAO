@@ -1244,12 +1244,8 @@ namespace
     if (!o.force && left > life / 3)
       {
         time_t const due = ACE_OS::time (nullptr) + static_cast<time_t> (left - life / 3);
-        struct tm tm_buf;
-        char buf[32];
-        ACE_OS::gmtime_r (&due, &tm_buf);
-        ACE_OS::strftime (buf, sizeof buf, "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
         ACE_OS::printf ("Not due: %s is valid for %lld more day(s); renewal starts %s (--force renews now).\n",
-                        o.cert.c_str (), left / 86400, buf);
+                        o.cert.c_str (), left / 86400, setup_iso_time (due).c_str ());
         return EXIT_OK;
       }
 

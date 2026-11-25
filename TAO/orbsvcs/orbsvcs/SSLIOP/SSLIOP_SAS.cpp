@@ -431,14 +431,22 @@ SAS_Target::process (PortableInterceptor::ServerRequestInfo_ptr ri,
                   user, true);
         }
 
-      TAO::Security::GSSUP_Verifier *const v = TAO::Security::GSSUP_Verifier::installed ();
+      using Verifier = TAO::Security::GSSUP_Verifier;
+      Verifier *const v = Verifier::installed ();
       std::string detail;
-      bool const ok = v != nullptr && v->verify (user, password, c.target, detail);
+      Verifier::Result const r =
+        v == nullptr ? Verifier::UNAVAILABLE : v->verify (user, password, c.target, caller.source, detail);
       wipe (password);
-      if (!ok)
-        refuse (ri, caller, operation, id, 1, Reason::GSSUP_FAILED,
-                v == nullptr ? "no GSSUP verifier is installed" : (detail.empty () ? "rejected" : detail.c_str ()),
-                user, true);
+      if (r != Verifier::ACCEPTED)
+        {
+          // One answer on the wire whatever the reason (R13, R19).
+          char const *const reason = r == Verifier::LOCKED         ? Reason::GSSUP_LOCKED
+                                     : r == Verifier::RATE_LIMITED ? Reason::GSSUP_RATE_LIMITED
+                                                                   : Reason::GSSUP_FAILED;
+          if (v == nullptr)
+            detail = "no GSSUP verifier is installed";
+          refuse (ri, caller, operation, id, 1, reason, detail.empty () ? "rejected" : detail.c_str (), user, true);
+        }
       caller.authenticated = scoped (user, c.target);
     }
   else if (c.gssup == 2)
