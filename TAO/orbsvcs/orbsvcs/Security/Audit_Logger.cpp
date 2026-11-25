@@ -17,7 +17,9 @@
 #include "ace/OS_NS_unistd.h"
 #include "ace/SOCK_Connector.h"
 #include "ace/SOCK_Stream.h"
-#include "ace/os_include/sys/os_un.h"
+#if !defined (ACE_LACKS_UNIX_DOMAIN_SOCKETS)
+# include "ace/os_include/sys/os_un.h"
+#endif
 #include "ace/os_include/os_netdb.h"
 
 #include <algorithm>

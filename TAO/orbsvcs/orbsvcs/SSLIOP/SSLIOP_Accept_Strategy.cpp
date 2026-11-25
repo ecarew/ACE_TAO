@@ -31,10 +31,10 @@ namespace
   std::string
   address (ACE_INET_Addr const &a)
   {
-    char buf[INET6_ADDRSTRLEN + 8] = "";
-    if (a.addr_to_string (buf, sizeof buf, 1) != 0)
+    ACE_TCHAR buf[INET6_ADDRSTRLEN + 8] = ACE_TEXT ("");
+    if (a.addr_to_string (buf, sizeof buf / sizeof buf[0], 1) != 0)
       return "?";
-    return buf;
+    return ACE_TEXT_ALWAYS_CHAR (buf);
   }
 
   std::string
