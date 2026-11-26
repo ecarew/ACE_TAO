@@ -3,5 +3,8 @@ interface Who
   /// The caller as the servant sees it through SecurityCurrent.
   string whoami ();
   void poke ();
+  /// Calls whoami() on @a ior (a middle tier) and returns "RELAY " and
+  /// its answer; exceptions pass through.
+  string relay (in string ior);
   oneway void shutdown ();
 };

@@ -167,7 +167,9 @@ my $third = login ('alice', $pw_wrong);
 my $locked = login ('alice', $pw_alice);
 expect ('the 3rd failure locks alice; the answer is still a plain refusal', $third, [@refused]);
 expect ('locked: even the right password is refused, with the same answer', $locked, [@refused], ['^WHOAMI']);
-(my $a1 = $wrong) =~ s/\n.*//s; (my $a2 = $locked) =~ s/\n.*//s; (my $a3 = $nouser) =~ s/\n.*//s;
+# The first line of each reply, ignoring the client's own audit records.
+sub first_reply { my $s = shift; $s =~ s/^.*ace-tao-audit.*\n//mg; $s =~ s/\n.*//s; return $s; }
+my $a1 = first_reply ($wrong); my $a2 = first_reply ($locked); my $a3 = first_reply ($nouser);
 expect ('  (wrong password, unknown user and locked user: identical replies)',
         ($a1 eq $a2 && $a2 eq $a3) ? "same" : "differ: $a1 / $a2 / $a3", ['^same$']);
 expect ('bob is not affected by alice\'s lock', login ('bob', $pw_bob), [@ok]);

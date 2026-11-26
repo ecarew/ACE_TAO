@@ -435,6 +435,7 @@ SAS_Target::config ()
     r.audit_grants = h.get ("audit_grants") == "on";
     r.assertion = r.csiv2 != 0 && !h.get ("csiv2_asserters").empty ();
     r.anonymous = h.get ("allow_anonymous_assertion") == "on";
+    r.assert_caller = h.get ("csiv2_assert_caller") == "on";
     return r;
   } ();
   return c;

@@ -79,6 +79,15 @@ namespace
 
     void poke () override {}
 
+    char *
+    relay (char const *ior) override
+    {
+      CORBA::Object_var obj = this->orb_->string_to_object (ior);
+      Who_var next = Who::_unchecked_narrow (obj.in ());
+      CORBA::String_var s = next->whoami ();
+      return CORBA::string_dup ((std::string ("RELAY ") + s.in ()).c_str ());
+    }
+
     void shutdown () override { this->orb_->shutdown (false); }
 
   private:

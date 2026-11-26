@@ -70,6 +70,9 @@ namespace TAO
         bool audit_grants = false;
         bool assertion = false;  ///< csiv2_asserters is set
         bool anonymous = false;  ///< allow_anonymous_assertion = on
+        /// Client side: assert the current request's caller on calls a
+        /// servant makes (csiv2_assert_caller = on).
+        bool assert_caller = false;
       };
       static Config const &config ();
 

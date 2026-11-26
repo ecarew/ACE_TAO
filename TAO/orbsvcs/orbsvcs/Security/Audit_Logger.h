@@ -104,6 +104,11 @@ namespace TAO
       constexpr char const ASSERTER_LIST_LOADED[] = "ASSERTER_LIST_LOADED";
       constexpr char const ASSERTER_LIST_REJECTED[] = "ASSERTER_LIST_REJECTED";
       constexpr char const ASSERTER_LIST_SIGNED[] = "ASSERTER_LIST_SIGNED";
+      // Client side (W6)
+      constexpr char const SAS_CLIENT_NO_CREDENTIALS[] = "SAS_CLIENT_NO_CREDENTIALS";
+      constexpr char const SAS_CLIENT_REFUSED[] = "SAS_CLIENT_REFUSED";
+      constexpr char const SAS_CLIENT_SENT[] = "SAS_CLIENT_SENT";
+      constexpr char const GSSUP_CREDENTIALS_ACQUIRED[] = "GSSUP_CREDENTIALS_ACQUIRED";
     }
 
     /**

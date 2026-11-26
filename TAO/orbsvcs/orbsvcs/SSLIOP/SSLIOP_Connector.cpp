@@ -798,14 +798,12 @@ TAO::SSLIOP::Connector::retrieve_credentials (TAO_Stub *stub,
       SecurityLevel3::OwnCredentialsList_var creds_list =
         creds_policy->creds_list ();
 
-      if (creds_list->length () > 0)
-        {
-          // Assume that we've got an SSLIOP credential.
-          SecurityLevel3::Credentials_ptr credentials =
-            creds_list[0u];
-
-          ssliop_credentials =
-            TAO::SSLIOP::OwnCredentials::_narrow (credentials);
+      // The first TLS credential in the list; others (GSSUP) are for
+      // the SAS layer.
+      for (CORBA::ULong i = 0;
+           CORBA::is_nil (ssliop_credentials.in ()) && i < creds_list->length ();
+           ++i)
+        ssliop_credentials = TAO::SSLIOP::OwnCredentials::_narrow (creds_list[i]);
 
           if (!CORBA::is_nil (ssliop_credentials.in ()))
             {
@@ -832,7 +830,6 @@ TAO::SSLIOP::Connector::retrieve_credentials (TAO_Stub *stub,
                   return TAO::SSLIOP::OwnCredentials::_nil ();
                 }
             }
-        }
     }
   else
     {

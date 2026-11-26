@@ -133,6 +133,24 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
   advertise identity assertion in their SAS layer. New test
   orbsvcs/tests/Security/Assertion.
 
+. CSIv2 SAS on the TAO client. SSLIOP now sends a stateless
+  EstablishContext to targets whose CSIv2 component asks for one, and
+  turns a ContextError reply into NO_PERMISSION (audited as
+  SAS_CLIENT_REFUSED). GSSUP credentials are acquired through
+  SecurityLevel3 with the new "SL3GSSUP" method and an
+  SSLIOP::GSSUPAuthData argument: a user@realm and a password source
+  ("prompt", "fd:N" or "file:PATH", the file owner-only), never the
+  password itself. They are sent only over TLS and only to a target
+  whose GSSUP target name matches theirs; a target that requires GSSUP
+  without matching credentials is refused locally
+  (SAS_CLIENT_NO_CREDENTIALS). With csiv2_assert_caller = on, calls a
+  servant makes assert the caller of the request it is serving (its
+  user@realm, or its certificate chain) to targets that support identity
+  assertion. A ContextEstablishmentPolicy can carry the credentials or
+  turn client authentication off. The SSLIOP connector now takes the
+  first TLS credential of such a policy's list rather than only the
+  first entry. New test orbsvcs/tests/Security/SAS_Client.
+
 . SSLIOP never negotiates below TLS 1.2: SSL 3.0, TLS 1.0 and TLS 1.1 are
   refused in every mode, whatever -SSLVersionList says (asking for them
   logs a warning). The startup self-check reports it (tls_versions).

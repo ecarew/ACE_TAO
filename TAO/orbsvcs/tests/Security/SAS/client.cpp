@@ -2,7 +2,19 @@
 // service context (a client request interceptor adds it) and prints the
 // SAS context of the reply.
 //
-//   client -k IOR [-c whoami|poke] [-m MODE] [-a ASSERTION] [-i CONTEXT_ID]
+//   client -k IOR [-c whoami|poke|relay] [-m MODE] [-a ASSERTION] [-i CONTEXT_ID]
+//          [-g USER:SOURCE[:TARGET] [-G]] [-b] [-r IOR]
+//
+// -c relay asks the server to call whoami() on the -r reference and
+// prints "RELAY <its answer>".
+//
+// -g acquires SecurityLevel3 "SL3GSSUP" credentials (SOURCE: prompt,
+// fd:N or file:PATH; TARGET: the GSSUP target name, default the user's
+// realm) and lets TAO's own SAS client send them ("ACQUIRE OK" or
+// "ACQUIRE FAILED <exception>").  They go on the ORB's default list, or
+// with -G into a ContextEstablishmentPolicy on the reference.  -b sets a
+// ContextEstablishmentPolicy that turns TAO's client authentication off,
+// so a target that requires GSSUP is called without it.
 //
 // MODE:
 //   none                    no SAS context (with -a: EstablishContext with
@@ -33,6 +45,8 @@
 #include "orbsvcs/GSSUPC.h"
 #include "orbsvcs/Security/CSI_Utils.h"
 #include "orbsvcs/SSLIOP/SSLIOP_SAS.h"
+#include "orbsvcs/SecurityLevel3C.h"
+#include "orbsvcs/SSLIOPC.h"
 
 #include "tao/PI/PI.h"
 #include "tao/LocalObject.h"
@@ -362,7 +376,11 @@ ACE_TMAIN (int argc, ACE_TCHAR *argv[])
 
       CORBA::ORB_var orb = CORBA::ORB_init (argc, argv);
       char const *ior = nullptr;
-      ACE_Get_Opt opts (argc, argv, ACE_TEXT ("k:c:m:a:i:"));
+      std::string gssup;
+      bool in_policy = false;
+      bool bypass = false;
+      char const *relay_ior = "";
+      ACE_Get_Opt opts (argc, argv, ACE_TEXT ("k:c:m:a:i:g:Gbr:"));
       for (int c; (c = opts ()) != -1; )
         switch (c)
           {
@@ -371,6 +389,10 @@ ACE_TMAIN (int argc, ACE_TCHAR *argv[])
           case 'm': mode = ACE_TEXT_ALWAYS_CHAR (opts.opt_arg ()); break;
           case 'a': assertion = ACE_TEXT_ALWAYS_CHAR (opts.opt_arg ()); break;
           case 'i': context_id = ACE_OS::strtoull (ACE_TEXT_ALWAYS_CHAR (opts.opt_arg ()), nullptr, 10); break;
+          case 'g': gssup = ACE_TEXT_ALWAYS_CHAR (opts.opt_arg ()); break;
+          case 'G': in_policy = true; break;
+          case 'b': bypass = true; break;
+          case 'r': relay_ior = ACE_TEXT_ALWAYS_CHAR (opts.opt_arg ()); break;
           default: break;
           }
       if (ior == nullptr)
@@ -386,6 +408,58 @@ ACE_TMAIN (int argc, ACE_TCHAR *argv[])
           orb->destroy ();
           return 1;
         }
+      SecurityLevel3::OwnCredentials_var creds;
+      if (!gssup.empty ())
+        {
+          std::vector<std::string> const g = split_on (gssup, ':');
+          try
+            {
+              CORBA::Object_var cobj = orb->resolve_initial_references ("SecurityLevel3:CredentialsCurator");
+              SecurityLevel3::CredentialsCurator_var curator = SecurityLevel3::CredentialsCurator::_narrow (cobj.in ());
+              SSLIOP::GSSUPAuthData data;
+              data.username = g.size () > 0 ? g[0].c_str () : "";
+              // A SOURCE of file:PATH or fd:N holds a colon: rejoin it.
+              std::string source = g.size () > 1 ? g[1] : "";
+              size_t next = 2;
+              if ((source == "file" || source == "fd") && g.size () > 2)
+                source += ":" + g[next++];
+              data.password_source = source.c_str ();
+              data.target_name = g.size () > next ? g[next].c_str () : "";
+              CORBA::Any args;
+              args <<= data;
+              SecurityLevel3::CredentialsAcquirer_var acquirer = curator->acquire_credentials ("SL3GSSUP", args);
+              creds = acquirer->get_credentials (!in_policy);
+              ACE_OS::printf ("ACQUIRE OK\n");
+            }
+          catch (CORBA::Exception const &ex)
+            {
+              ACE_OS::printf ("ACQUIRE FAILED %s\n", ex._name ());
+              orb->destroy ();
+              return 0;
+            }
+        }
+      if (bypass || in_policy)
+        {
+          SecurityLevel3::ContextEstablishmentPolicyArgument arg;
+          arg.creds_directive = SecurityLevel3::CD_Default;
+          arg.creds_list.length (0);
+          if (in_policy && !CORBA::is_nil (creds.in ()))
+            {
+              arg.creds_list.length (1);
+              arg.creds_list[0] = SecurityLevel3::OwnCredentials::_duplicate (creds.in ());
+            }
+          arg.use_client_auth = bypass ? SecurityLevel3::FD_DoNotUse : SecurityLevel3::FD_Use;
+          arg.use_target_auth = SecurityLevel3::FD_Use;
+          arg.use_confidentiality = SecurityLevel3::FD_Use;
+          arg.use_integrity = SecurityLevel3::FD_Use;
+          CORBA::Any any;
+          any <<= arg;
+          CORBA::PolicyList policies (1);
+          policies.length (1);
+          policies[0] = orb->create_policy (SecurityLevel3::ContextEstablishmentPolicyType, any);
+          obj = obj->_set_policy_overrides (policies, CORBA::ADD_OVERRIDE);
+          policies[0]->destroy ();
+        }
       Who_var who = Who::_unchecked_narrow (obj.in ());
       try
         {
@@ -393,6 +467,11 @@ ACE_TMAIN (int argc, ACE_TCHAR *argv[])
             {
               who->poke ();
               ACE_OS::printf ("POKE OK\n");
+            }
+          else if (ACE_OS::strcmp (what, "relay") == 0)
+            {
+              CORBA::String_var s = who->relay (relay_ior);
+              ACE_OS::printf ("%s\n", s.in ());
             }
           else if (ACE_OS::strcmp (what, "shutdown") == 0)
             {

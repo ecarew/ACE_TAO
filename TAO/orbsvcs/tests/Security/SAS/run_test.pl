@@ -138,7 +138,9 @@ foreach my $case (['wrong password', $wrong], ['unknown user', $nouser], ['wrong
     expect ("$case->[0]: ContextError major 1, GSSUP error UNSPECIFIED, NO_PERMISSION", $case->[1],
             ['^SAS REPLY error ctx=0 major=1 minor=1 gssup_error=1$', '^whoami EXCEPTION NO_PERMISSION$'], ['^WHOAMI']);
 }
-(my $w = $wrong) =~ s/\n.*//s; (my $n = $nouser) =~ s/\n.*//s;
+# The first line of the reply, ignoring the client's own audit records.
+sub first_reply { my $s = shift; $s =~ s/^.*ace-tao-audit.*\n//mg; $s =~ s/\n.*//s; return $s; }
+my $w = first_reply ($wrong); my $n = first_reply ($nouser);
 expect ('  (a wrong password and an unknown user get identical replies)', ($w eq $n ? "same" : "differ: $w / $n"), ['^same$']);
 
 expect ('MessageInContext: ContextError major 4 (no context is kept)', call ('alpha', 'whoami', 'mic', '-i 42'),
@@ -172,8 +174,14 @@ stop_server ();
 start_server ('required');
 expect ('required: the reference requires GSSUP (compound and authentication layer)', scalar (`$iortool -k file://$d/alpha.ior 2>&1`),
         ['^    MECH 0 requires=0xc6 transport=36$', '^      AS supports=0x40 requires=0x40 mech_octets=8$']);
-expect ('required: a request without a login is refused (SAS_MISSING, no SAS reply)', call ('beta', 'poke', 'none'),
+expect ('required: a request without a login is refused (SAS_MISSING, no SAS reply)', call ('beta', 'poke', 'none', '-b'),
         ['^SAS REPLY none$', '^poke EXCEPTION NO_PERMISSION$']);
+# A client configuration that only sends its audit records to stderr.
+spit ("$work/client.conf", "mode = test\naudit_sink = stderr\ntime_sync_wait = 0\n");
+chmod (0600, "$work/client.conf");
+expect ('required: a TAO client without GSSUP credentials refuses locally',
+        do { local $ENV{'ACE_TAO_SECURITY_CONF'} = "$work/client.conf"; call ('beta', 'poke', 'none') },
+        ['^SAS REPLY none$', '^poke EXCEPTION NO_PERMISSION$', 'reason="SAS_CLIENT_NO_CREDENTIALS" .*target="\@lab\.test"']);
 expect ('required: with a login it is served', call ('beta', 'poke', 'gssup:alice:wonderland'),
         ['^SAS REPLY complete ctx=0 stateful=0$', '^POKE OK$']);
 expect ('  (SAS_MISSING audited)', slurp ($log), ['reason="SAS_MISSING" .*\] no SAS context; GSSUP client authentication is required']);

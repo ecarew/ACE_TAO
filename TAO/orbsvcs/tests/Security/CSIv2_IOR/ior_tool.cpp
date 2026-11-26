@@ -20,6 +20,8 @@
 
 #include "ace/Get_Opt.h"
 #include "ace/OS_NS_stdio.h"
+
+#include <string>
 #include "ace/OS_NS_string.h"
 
 namespace
@@ -98,6 +100,24 @@ namespace
                         static_cast<unsigned> (m.as_context_mech.target_supports),
                         static_cast<unsigned> (m.as_context_mech.target_requires),
                         m.as_context_mech.client_authentication_mech.length ());
+        {
+          // The GSSUP target name, printable octets as they are, others
+          // as \xNN (an exported name starts with 04 01).
+          std::string t;
+          CSI::GSS_NT_ExportedName const &n = m.as_context_mech.target_name;
+          for (CORBA::ULong k = 0; k < n.length (); ++k)
+            {
+              char buf[8];
+              if (n[k] >= 0x20 && n[k] < 0x7F && n[k] != '\\')
+                t += static_cast<char> (n[k]);
+              else
+                {
+                  ACE_OS::snprintf (buf, sizeof buf, "\\x%02x", static_cast<unsigned> (n[k]));
+                  t += buf;
+                }
+            }
+          ACE_OS::printf ("        target_name=%s\n", t.empty () ? "(empty)" : t.c_str ());
+        }
         ACE_OS::printf ("      SAS supports=0x%x requires=0x%x identity_types=0x%x\n",
                         static_cast<unsigned> (m.sas_context_mech.target_supports),
                         static_cast<unsigned> (m.sas_context_mech.target_requires),

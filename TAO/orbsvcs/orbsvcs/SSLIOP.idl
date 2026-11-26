@@ -86,6 +86,29 @@ module SSLIOP {
     File key;
   };
 
+# pragma prefix "ssliop.tao"
+  /**
+   * Arguments of the "SL3GSSUP" acquisition method: CSIv2 GSSUP
+   * username/password credentials for a TAO client.
+   *
+   * The password is never passed here.  @c password_source says where
+   * to read it:
+   *   "prompt"     the controlling terminal, without echo
+   *   "fd:N"       file descriptor N, up to the first newline
+   *   "file:PATH"  the first line of PATH, which must be owned by the
+   *                process's user and not readable by others
+   *
+   * The credentials are sent only to a target whose GSSUP target name
+   * (component 33) equals @c target_name; an empty @c target_name means
+   * the realm of @c username ("alice@example.com" -> "@example.com").
+   */
+  struct GSSUPAuthData {
+    string username;
+    string password_source;
+    string target_name;
+  };
+# pragma prefix "omg.org"
+
 # pragma prefix "omg.org"
 
 };

@@ -4,6 +4,8 @@
 #include "orbsvcs/SSLIOP/SSLIOP_Invocation_Interceptor.h"
 //#include "SSLIOP_IORInterceptor.h"
 #include "orbsvcs/SSLIOP/SSLIOP_CredentialsAcquirerFactory.h"
+#include "orbsvcs/SSLIOP/SSLIOP_GSSUP_Credentials.h"
+#include "orbsvcs/SSLIOP/SSLIOP_SAS_Client.h"
 
 #include "orbsvcs/Security/SL3_SecurityCurrent.h"
 #include "orbsvcs/Security/SL3_CredentialsCurator.h"
@@ -183,6 +185,30 @@ TAO::SSLIOP::ORBInitializer::post_init (
                     TAO::SSLIOP::CredentialsAcquirerFactory (true),
                     CORBA::NO_MEMORY ());
   tao_curator->register_acquirer_factory ("SL3TLSKeystore", keystore_factory);
+
+  // CSIv2 GSSUP username/password credentials for this ORB's calls (W6).
+  TAO::SSLIOP::GSSUP_CredentialsAcquirerFactory *gssup_factory = nullptr;
+  ACE_NEW_THROW_EX (gssup_factory,
+                    TAO::SSLIOP::GSSUP_CredentialsAcquirerFactory,
+                    CORBA::NO_MEMORY ());
+  tao_curator->register_acquirer_factory ("SL3GSSUP", gssup_factory);
+
+  // The client side of the CSIv2 SAS protocol (R15), on remote calls.
+  CORBA::Object_var cur_obj = info->resolve_initial_references ("SSLIOPCurrent");
+  ::SSLIOP::Current_var ssliop_current = ::SSLIOP::Current::_narrow (cur_obj.in ());
+  PortableInterceptor::ClientRequestInterceptor_ptr ci = PortableInterceptor::ClientRequestInterceptor::_nil ();
+  ACE_NEW_THROW_EX (ci,
+                    TAO::SSLIOP::SAS_Client_Interceptor (tao_curator.in (), ssliop_current.in (), this->qop_),
+                    CORBA::NO_MEMORY ());
+  PortableInterceptor::ClientRequestInterceptor_var client_interceptor = ci;
+  CORBA::Any remote_only;
+  remote_only <<= PortableInterceptor::REMOTE_ONLY;
+  CORBA::PolicyList client_policies (1);
+  client_policies.length (1);
+  client_policies[0] = orb->create_policy (PortableInterceptor::PROCESSING_MODE_POLICY_TYPE, remote_only);
+  info_3_1->add_client_request_interceptor_with_policy (client_interceptor.in (), client_policies);
+  client_policies[0]->destroy ();
+  client_policies[0] = CORBA::Policy::_nil ();
 }
 
 size_t
