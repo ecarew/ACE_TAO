@@ -76,6 +76,9 @@ namespace TAO
      */
     int _tao_byte_order ();
 
+    /// The transport the profile resolver chose for this request.
+    TAO_Transport *transport () const;
+
   protected:
     /// Initialize the @a spec.
     void init_target_spec (TAO_Target_Specification &spec, TAO_OutputCDR& output);

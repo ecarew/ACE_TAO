@@ -132,6 +132,83 @@ namespace TAO
                                        std::string const &binding,
                                        std::string &token,
                                        std::string &why);
+
+      /**
+       * Where a client's Kerberos credentials come from (R29): a ticket
+       * cache, or, for a service, a client keytab.
+       */
+      struct Client_Source
+      {
+        /// Ticket cache ("FILE:/path", "KCM:", ...); empty: the default
+        /// (KRB5CCNAME).  With a keytab, empty means a private in-memory
+        /// cache, so the user's own cache is never written.
+        std::string ccache;
+        /// Client keytab; empty: use the ticket cache alone.
+        std::string keytab;
+        /// Client principal (user@REALM); required with a keytab.
+        std::string principal;
+      };
+
+      /**
+       * Checks that @a source yields usable initiator credentials.  On
+       * success @a client is their principal and @a lifetime the seconds
+       * they remain valid (-1 if indefinite); false with @a why otherwise
+       * (no ticket, expired, no key for the principal).
+       */
+      TAO_SSLIOP_Export bool check_client (Client_Source const &source,
+                                           std::string &client,
+                                           long &lifetime,
+                                           std::string &why);
+
+      /// The realm of principal @a principal (after its last unquoted
+      /// '@'), or empty.
+      TAO_SSLIOP_Export std::string realm_of (std::string const &principal);
+
+      /**
+       * Reads a Kerberos exported name (RFC 2743: 04 01, the Kerberos
+       * mechanism OID, the name), as a CSIv2 target name carries it.
+       * False if @a octets is not one.
+       */
+      TAO_SSLIOP_Export bool parse_exported_name (std::string const &octets,
+                                                  std::string &principal);
+
+      /**
+       * @class Initiator
+       *
+       * One client login: makes the token for a target and keeps the GSS
+       * context until the target's reply token (the Kerberos AP-REP)
+       * arrives, so that the client can check it came from the service
+       * (mutual authentication).
+       */
+      class TAO_SSLIOP_Export Initiator
+      {
+      public:
+        Initiator ();
+        ~Initiator ();
+        Initiator (Initiator const &) = delete;
+        Initiator &operator= (Initiator const &) = delete;
+
+        /**
+         * Makes a token for service @a target from @a source, asking for
+         * mutual authentication, bound to @a binding if not empty.
+         */
+        bool start (Client_Source const &source,
+                    std::string const &target,
+                    std::string const &binding,
+                    std::string &token,
+                    std::string &why);
+
+        /**
+         * Checks the target's reply token.  True when it completes mutual
+         * authentication; false with @a why if it is missing, malformed,
+         * or not from the service.
+         */
+        bool finish (std::string const &reply, std::string &why);
+
+      private:
+        struct Impl;
+        Impl *impl_;
+      };
     }
   }
 }

@@ -14,6 +14,14 @@
  *    equals the credentials' target name.  A target that requires GSSUP
  *    and has no matching credentials is refused locally (NO_PERMISSION,
  *    SAS_CLIENT_NO_CREDENTIALS) without contacting it.
+ *  - Kerberos (Phase 3 K3, R29): credentials acquired with "SL3Kerberos"
+ *    log in to a target whose Kerberos service principal they allow,
+ *    preferred over GSSUP.  The token goes only over TLS, bound to the
+ *    connection (the server certificate's RFC 5929 hash), and asks for
+ *    mutual authentication: the reply must carry the service's Kerberos
+ *    reply token, or the call fails with NO_PERMISSION
+ *    (KRB_SERVER_UNVERIFIED).  A target that requires Kerberos, with no
+ *    usable credentials, is refused locally as for GSSUP.
  *  - Identity assertion: with csiv2_assert_caller = on, a call a servant
  *    makes while serving a request asserts that request's caller (its
  *    user@realm as a principal name, or its certificate chain) to targets
@@ -35,8 +43,12 @@
 #include "orbsvcs/SSLIOPC.h"
 #include "orbsvcs/SecurityC.h"
 #include "orbsvcs/Security/SL3_CredentialsCurator.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Kerberos.h"
 #include "tao/PI/PI.h"
 #include "tao/LocalObject.h"
+
+#include <map>
+#include <memory>
 
 #if defined(_MSC_VER)
 #pragma warning(push)
@@ -71,11 +83,21 @@ namespace TAO
 
     private:
       /// A ContextError in the reply: audit it and raise NO_PERMISSION.
+      /// A Kerberos login waiting for the reply: check the target's reply
+      /// token, and raise NO_PERMISSION if it does not verify.
       void check_reply (PortableInterceptor::ClientRequestInfo_ptr ri, bool exception);
+
+      /// The Kerberos login sent with @a ri's request, removed from the
+      /// pending set; null if there is none.
+      std::unique_ptr<Kerberos::Initiator> take_pending (PortableInterceptor::ClientRequestInfo_ptr ri);
 
       TAO::SL3::CredentialsCurator_var curator_;
       ::SSLIOP::Current_var current_;
       ::Security::QOP const default_qop_;
+
+      /// Kerberos logins waiting for their replies, by invocation.
+      TAO_SYNCH_MUTEX pending_lock_;
+      std::map<void const *, std::unique_ptr<Kerberos::Initiator>> pending_;
     };
   }
 }

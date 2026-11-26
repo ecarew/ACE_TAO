@@ -113,6 +113,11 @@ namespace TAO
       constexpr char const SAS_CLIENT_REFUSED[] = "SAS_CLIENT_REFUSED";
       constexpr char const SAS_CLIENT_SENT[] = "SAS_CLIENT_SENT";
       constexpr char const GSSUP_CREDENTIALS_ACQUIRED[] = "GSSUP_CREDENTIALS_ACQUIRED";
+      /// SL3Kerberos credentials acquired (Phase 3 K3).
+      constexpr char const KRB_CREDENTIALS_ACQUIRED[] = "KRB_CREDENTIALS_ACQUIRED";
+      /// The target's Kerberos reply was missing or did not verify, so the
+      /// reply is not trusted to come from the service (K3).
+      constexpr char const KRB_SERVER_UNVERIFIED[] = "KRB_SERVER_UNVERIFIED";
     }
 
     /**

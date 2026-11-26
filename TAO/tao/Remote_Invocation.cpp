@@ -33,6 +33,12 @@ namespace TAO
   {
   }
 
+  TAO_Transport *
+  Remote_Invocation::transport () const
+  {
+    return this->resolver_.transport ();
+  }
+
   void
   Remote_Invocation::init_target_spec (TAO_Target_Specification &target_spec,
                                        TAO_OutputCDR &output)

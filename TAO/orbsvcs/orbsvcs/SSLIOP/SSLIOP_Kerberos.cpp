@@ -491,4 +491,286 @@ TAO::SSLIOP::Kerberos::initiate (std::string const &principal,
 #endif /* TAO_HAS_GSSAPI */
 }
 
+std::string
+TAO::SSLIOP::Kerberos::realm_of (std::string const &principal)
+{
+  // The realm follows the last '@' that is not quoted by '\'.
+  size_t at = std::string::npos;
+  for (size_t i = 0; i < principal.size (); ++i)
+    {
+      if (principal[i] == '\\')
+        ++i;
+      else if (principal[i] == '@')
+        at = i;
+    }
+  return at == std::string::npos ? std::string () : principal.substr (at + 1);
+}
+
+bool
+TAO::SSLIOP::Kerberos::parse_exported_name (std::string const &o, std::string &principal)
+{
+  std::string const oid = mech_der ();
+  if (o.size () < 4 + oid.size () + 4 || o[0] != '\x04' || o[1] != '\x01')
+    return false;
+  size_t const oid_len = (static_cast<unsigned char> (o[2]) << 8) | static_cast<unsigned char> (o[3]);
+  if (oid_len != oid.size () || o.compare (4, oid_len, oid) != 0)
+    return false;
+  size_t p = 4 + oid_len;
+  size_t len = 0;
+  for (int i = 0; i < 4; ++i)
+    len = (len << 8) | static_cast<unsigned char> (o[p + i]);
+  p += 4;
+  if (len == 0 || p + len != o.size ())
+    return false;
+  principal = o.substr (p, len);
+  return true;
+}
+
+#if defined (TAO_HAS_GSSAPI)
+namespace
+{
+  /// Initiator credentials from @a source.  A keytab without a named
+  /// cache gets a private in-memory one, one per client principal and
+  /// keytab in this process, so the TGT obtained with the keytab is
+  /// reused but never lands in the user's own cache.
+  gss_cred_id_t
+  initiator_cred (TAO::SSLIOP::Kerberos::Client_Source const &source, OM_uint32 *lifetime, std::string &why)
+  {
+    if (!source.keytab.empty () && source.principal.empty ())
+      {
+        why = "a client keytab needs the client principal";
+        return GSS_C_NO_CREDENTIAL;
+      }
+    gss_name_t name = GSS_C_NO_NAME;
+    if (!source.principal.empty ())
+      {
+        name = import_principal (source.principal, why);
+        if (name == GSS_C_NO_NAME)
+          return GSS_C_NO_CREDENTIAL;
+      }
+    std::string ccache = source.ccache;
+    if (ccache.empty () && !source.keytab.empty ())
+      {
+        unsigned long h = 5381;
+        for (char ch : source.principal + '\n' + source.keytab)
+          h = h * 33 + static_cast<unsigned char> (ch);
+        ccache = "MEMORY:ace_tao_" + std::to_string (static_cast<unsigned long> (ACE_OS::getpid ())) + "_"
+                 + std::to_string (h);
+      }
+    gss_key_value_element_desc elements[2];
+    OM_uint32 count = 0;
+    if (!ccache.empty ())
+      {
+        elements[count].key = "ccache";
+        elements[count].value = ccache.c_str ();
+        ++count;
+      }
+    if (!source.keytab.empty ())
+      {
+        elements[count].key = "client_keytab";
+        elements[count].value = source.keytab.c_str ();
+        ++count;
+      }
+    gss_key_value_set_desc store = { count, elements };
+    gss_OID_set_desc mechs = { 1, &krb5_oid_desc };
+    OM_uint32 minor = 0;
+    gss_cred_id_t cred = GSS_C_NO_CREDENTIAL;
+    OM_uint32 const major = ::gss_acquire_cred_from (&minor, name, GSS_C_INDEFINITE, &mechs, GSS_C_INITIATE,
+                                                     count > 0 ? &store : GSS_C_NO_CRED_STORE, &cred, nullptr,
+                                                     lifetime);
+    OM_uint32 m2 = 0;
+    if (name != GSS_C_NO_NAME)
+      ::gss_release_name (&m2, &name);
+    if (GSS_ERROR (major))
+      {
+        std::string const from = !source.keytab.empty () ? "client keytab " + source.keytab
+                                 : !ccache.empty ()       ? "ticket cache " + ccache
+                                                          : std::string ("the default ticket cache");
+        why = "no Kerberos credentials in " + from + ": " + TAO::SSLIOP::Kerberos::status_text (major, minor);
+        return GSS_C_NO_CREDENTIAL;
+      }
+    return cred;
+  }
+}
+#endif /* TAO_HAS_GSSAPI */
+
+bool
+TAO::SSLIOP::Kerberos::check_client (Client_Source const &source,
+                                     std::string &client,
+                                     long &lifetime,
+                                     std::string &why)
+{
+#if defined (TAO_HAS_GSSAPI)
+  gss_cred_id_t cred = initiator_cred (source, nullptr, why);
+  if (cred == GSS_C_NO_CREDENTIAL)
+    return false;
+  OM_uint32 minor = 0;
+  gss_name_t name = GSS_C_NO_NAME;
+  OM_uint32 left = 0;
+  OM_uint32 major = ::gss_inquire_cred (&minor, cred, &name, &left, nullptr, nullptr);
+  bool ok = false;
+  if (GSS_ERROR (major))
+    why = "cannot read the Kerberos credentials: " + status_text (major, minor);
+  else if (left == 0 && source.keytab.empty ())
+    why = "the Kerberos ticket has expired (kinit)";
+  else
+    {
+      gss_buffer_desc text = GSS_C_EMPTY_BUFFER;
+      major = ::gss_display_name (&minor, name, &text, nullptr);
+      if (GSS_ERROR (major))
+        why = "cannot read the client principal: " + status_text (major, minor);
+      else
+        {
+          client.assign (static_cast<char const *> (text.value), text.length);
+          ::gss_release_buffer (&minor, &text);
+          lifetime = left == GSS_C_INDEFINITE ? -1L : static_cast<long> (left);
+          ok = true;
+        }
+    }
+  if (name != GSS_C_NO_NAME)
+    ::gss_release_name (&minor, &name);
+  ::gss_release_cred (&minor, &cred);
+  return ok;
+#else
+  ACE_UNUSED_ARG (source);
+  ACE_UNUSED_ARG (client);
+  ACE_UNUSED_ARG (lifetime);
+  why = "SSLIOP was built without GSS-API (MPC feature gssapi)";
+  return false;
+#endif /* TAO_HAS_GSSAPI */
+}
+
+struct TAO::SSLIOP::Kerberos::Initiator::Impl
+{
+#if defined (TAO_HAS_GSSAPI)
+  gss_cred_id_t cred = GSS_C_NO_CREDENTIAL;
+  gss_ctx_id_t ctx = GSS_C_NO_CONTEXT;
+  gss_name_t target = GSS_C_NO_NAME;
+#endif /* TAO_HAS_GSSAPI */
+  std::string binding;
+  std::string target_text;
+  bool waiting = false;
+
+  ~Impl ()
+  {
+#if defined (TAO_HAS_GSSAPI)
+    OM_uint32 minor = 0;
+    if (ctx != GSS_C_NO_CONTEXT)
+      ::gss_delete_sec_context (&minor, &ctx, GSS_C_NO_BUFFER);
+    if (target != GSS_C_NO_NAME)
+      ::gss_release_name (&minor, &target);
+    if (cred != GSS_C_NO_CREDENTIAL)
+      ::gss_release_cred (&minor, &cred);
+#endif /* TAO_HAS_GSSAPI */
+  }
+};
+
+TAO::SSLIOP::Kerberos::Initiator::Initiator ()
+  : impl_ (new Impl)
+{
+}
+
+TAO::SSLIOP::Kerberos::Initiator::~Initiator ()
+{
+  delete this->impl_;
+}
+
+bool
+TAO::SSLIOP::Kerberos::Initiator::start (Client_Source const &source,
+                                         std::string const &target,
+                                         std::string const &binding,
+                                         std::string &token,
+                                         std::string &why)
+{
+#if defined (TAO_HAS_GSSAPI)
+  Impl &i = *this->impl_;
+  if (i.waiting || i.ctx != GSS_C_NO_CONTEXT)
+    {
+      why = "this login has already started";
+      return false;
+    }
+  i.cred = initiator_cred (source, nullptr, why);
+  if (i.cred == GSS_C_NO_CREDENTIAL)
+    return false;
+  i.target = import_principal (target, why);
+  if (i.target == GSS_C_NO_NAME)
+    return false;
+  i.binding = binding;
+  i.target_text = target;
+
+  OM_uint32 minor = 0;
+  gss_buffer_desc out = GSS_C_EMPTY_BUFFER;
+  Bindings cb (i.binding);
+  OM_uint32 const major = ::gss_init_sec_context (&minor, i.cred, &i.ctx, i.target, &krb5_oid_desc,
+                                                  GSS_C_MUTUAL_FLAG, 0, cb.get (), GSS_C_NO_BUFFER, nullptr,
+                                                  &out, nullptr, nullptr);
+  bool ok = false;
+  if (major == GSS_S_CONTINUE_NEEDED && out.length > 0)
+    {
+      token.assign (static_cast<char const *> (out.value), out.length);
+      i.waiting = true;
+      ok = true;
+    }
+  else if (GSS_ERROR (major))
+    why = "cannot make a Kerberos token for " + target + ": " + status_text (major, minor);
+  else
+    why = "the Kerberos library did not ask for mutual authentication";
+  OM_uint32 m2 = 0;
+  if (out.length > 0)
+    ::gss_release_buffer (&m2, &out);
+  return ok;
+#else
+  ACE_UNUSED_ARG (source);
+  ACE_UNUSED_ARG (target);
+  ACE_UNUSED_ARG (binding);
+  ACE_UNUSED_ARG (token);
+  why = "SSLIOP was built without GSS-API (MPC feature gssapi)";
+  return false;
+#endif /* TAO_HAS_GSSAPI */
+}
+
+bool
+TAO::SSLIOP::Kerberos::Initiator::finish (std::string const &reply, std::string &why)
+{
+#if defined (TAO_HAS_GSSAPI)
+  Impl &i = *this->impl_;
+  if (!i.waiting)
+    {
+      why = "no Kerberos login is waiting for a reply";
+      return false;
+    }
+  i.waiting = false;
+  if (reply.empty ())
+    {
+      why = "the target returned no Kerberos reply token, so it did not prove it is " + i.target_text;
+      return false;
+    }
+  OM_uint32 minor = 0;
+  gss_buffer_desc in = { reply.size (), const_cast<char *> (reply.data ()) };
+  gss_buffer_desc out = GSS_C_EMPTY_BUFFER;
+  OM_uint32 flags = 0;
+  Bindings cb (i.binding);
+  OM_uint32 const major = ::gss_init_sec_context (&minor, i.cred, &i.ctx, i.target, &krb5_oid_desc,
+                                                  GSS_C_MUTUAL_FLAG, 0, cb.get (), &in, nullptr, &out, &flags,
+                                                  nullptr);
+  bool ok = false;
+  if (major == GSS_S_COMPLETE && (flags & GSS_C_MUTUAL_FLAG) != 0)
+    ok = true;
+  else if (major == GSS_S_COMPLETE)
+    why = "the Kerberos reply did not complete mutual authentication";
+  else if (major == GSS_S_CONTINUE_NEEDED)
+    why = "the Kerberos reply asks for another step; a stateless target sends one reply only";
+  else
+    why = "the Kerberos reply does not verify as " + i.target_text + ": " + status_text (major, minor);
+  OM_uint32 m2 = 0;
+  if (out.length > 0)
+    ::gss_release_buffer (&m2, &out);
+  return ok;
+#else
+  ACE_UNUSED_ARG (reply);
+  why = "SSLIOP was built without GSS-API (MPC feature gssapi)";
+  return false;
+#endif /* TAO_HAS_GSSAPI */
+}
+
 TAO_END_VERSIONED_NAMESPACE_DECL

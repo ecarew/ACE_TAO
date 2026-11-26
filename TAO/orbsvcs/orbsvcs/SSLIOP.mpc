@@ -37,6 +37,7 @@ project(SSLIOP) : orbsvcslib, orbsvcs_output, install, security, ssl, pi_server,
       ./SSLIOP/SSLIOP_GSSUP_Credentials.cpp
       ./SSLIOP/SSLIOP_SAS_Client.cpp
       ./SSLIOP/SSLIOP_Kerberos.cpp
+      ./SSLIOP/SSLIOP_Kerberos_Credentials.cpp
       ./SSLIOP/SSLIOP_Endpoint.cpp
       ./SSLIOP/SSLIOP_EVP_PKEY.cpp
       ./SSLIOP/SSLIOP_Factory.cpp

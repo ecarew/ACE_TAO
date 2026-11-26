@@ -16,6 +16,11 @@
 // ContextEstablishmentPolicy that turns TAO's client authentication off,
 // so a target that requires GSSUP is called without it.
 //
+// -K KEY=VALUE[,KEY=VALUE...] acquires SecurityLevel3 "SL3Kerberos"
+// credentials (keys ccache, keytab, principal, target; see
+// SSLIOP::KerberosAuthData) the same way ("ACQUIRE OK" or "ACQUIRE
+// FAILED <exception>").  With both -g and -K, TAO prefers Kerberos.
+//
 // MODE:
 //   none                    no SAS context (with -a: EstablishContext with
 //                           only the identity token)
@@ -438,10 +443,11 @@ ACE_TMAIN (int argc, ACE_TCHAR *argv[])
       CORBA::ORB_var orb = CORBA::ORB_init (argc, argv);
       char const *ior = nullptr;
       std::string gssup;
+      std::string kerberos;
       bool in_policy = false;
       bool bypass = false;
       char const *relay_ior = "";
-      ACE_Get_Opt opts (argc, argv, ACE_TEXT ("k:c:m:a:i:g:Gbr:"));
+      ACE_Get_Opt opts (argc, argv, ACE_TEXT ("k:c:m:a:i:g:K:Gbr:"));
       for (int c; (c = opts ()) != -1; )
         switch (c)
           {
@@ -451,6 +457,7 @@ ACE_TMAIN (int argc, ACE_TCHAR *argv[])
           case 'a': assertion = ACE_TEXT_ALWAYS_CHAR (opts.opt_arg ()); break;
           case 'i': context_id = ACE_OS::strtoull (ACE_TEXT_ALWAYS_CHAR (opts.opt_arg ()), nullptr, 10); break;
           case 'g': gssup = ACE_TEXT_ALWAYS_CHAR (opts.opt_arg ()); break;
+          case 'K': kerberos = ACE_TEXT_ALWAYS_CHAR (opts.opt_arg ()); break;
           case 'G': in_policy = true; break;
           case 'b': bypass = true; break;
           case 'r': relay_ior = ACE_TEXT_ALWAYS_CHAR (opts.opt_arg ()); break;
@@ -499,16 +506,54 @@ ACE_TMAIN (int argc, ACE_TCHAR *argv[])
               return 0;
             }
         }
+      SecurityLevel3::OwnCredentials_var krb_creds;
+      if (!kerberos.empty ())
+        {
+          try
+            {
+              CORBA::Object_var cobj = orb->resolve_initial_references ("SecurityLevel3:CredentialsCurator");
+              SecurityLevel3::CredentialsCurator_var curator = SecurityLevel3::CredentialsCurator::_narrow (cobj.in ());
+              SSLIOP::KerberosAuthData data;
+              for (std::string const &kv : split_on (kerberos, ','))
+                {
+                  size_t const eq = kv.find ('=');
+                  std::string const key = kv.substr (0, eq);
+                  std::string const value = eq == std::string::npos ? std::string () : kv.substr (eq + 1);
+                  if (key == "ccache")
+                    data.ccache = value.c_str ();
+                  else if (key == "keytab")
+                    data.keytab = value.c_str ();
+                  else if (key == "principal")
+                    data.principal = value.c_str ();
+                  else if (key == "target")
+                    data.target_name = value.c_str ();
+                }
+              CORBA::Any args;
+              args <<= data;
+              SecurityLevel3::CredentialsAcquirer_var acquirer = curator->acquire_credentials ("SL3Kerberos", args);
+              krb_creds = acquirer->get_credentials (!in_policy);
+              ACE_OS::printf ("ACQUIRE OK\n");
+            }
+          catch (CORBA::Exception const &ex)
+            {
+              ACE_OS::printf ("ACQUIRE FAILED %s\n", ex._name ());
+              orb->destroy ();
+              return 0;
+            }
+        }
       if (bypass || in_policy)
         {
           SecurityLevel3::ContextEstablishmentPolicyArgument arg;
           arg.creds_directive = SecurityLevel3::CD_Default;
           arg.creds_list.length (0);
-          if (in_policy && !CORBA::is_nil (creds.in ()))
-            {
-              arg.creds_list.length (1);
-              arg.creds_list[0] = SecurityLevel3::OwnCredentials::_duplicate (creds.in ());
-            }
+          if (in_policy)
+            for (SecurityLevel3::OwnCredentials_ptr c : {creds.in (), krb_creds.in ()})
+              if (!CORBA::is_nil (c))
+                {
+                  CORBA::ULong const n = arg.creds_list.length ();
+                  arg.creds_list.length (n + 1);
+                  arg.creds_list[n] = SecurityLevel3::OwnCredentials::_duplicate (c);
+                }
           arg.use_client_auth = bypass ? SecurityLevel3::FD_DoNotUse : SecurityLevel3::FD_Use;
           arg.use_target_auth = SecurityLevel3::FD_Use;
           arg.use_confidentiality = SecurityLevel3::FD_Use;

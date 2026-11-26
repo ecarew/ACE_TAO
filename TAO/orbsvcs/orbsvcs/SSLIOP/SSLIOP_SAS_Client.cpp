@@ -2,6 +2,8 @@
 #include "orbsvcs/SSLIOP/SSLIOP_SAS_Client.h"
 #include "orbsvcs/SSLIOP/SSLIOP_SAS.h"
 #include "orbsvcs/SSLIOP/SSLIOP_GSSUP_Credentials.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Kerberos_Credentials.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Connection_Handler.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Current.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Current_Impl.h"
 #include "orbsvcs/Security/Audit_Logger.h"
@@ -16,6 +18,8 @@
 #include "tao/Profile.h"
 #include "tao/Stub.h"
 #include "tao/Tagged_Components.h"
+#include "tao/Transport.h"
+#include "tao/PI/ClientRequestInfo.h"
 #include "tao/debug.h"
 
 #include "ace/OS_NS_string.h"
@@ -122,6 +126,33 @@ namespace
     return TAO::CSI_Utils::extract_sas_service_context (sc.in (), body);
   }
 
+  /// RFC 5929 tls-server-end-point data for the TLS connection the
+  /// request goes out on (the server certificate's hash), or empty if
+  /// it is not an SSLIOP connection.
+  std::string
+  connection_binding (PortableInterceptor::ClientRequestInfo_ptr ri)
+  {
+    TAO_ClientRequestInfo *const cri = dynamic_cast<TAO_ClientRequestInfo *> (ri);
+    TAO_Transport *const transport = cri == nullptr ? nullptr : cri->tao_transport ();
+    TAO_Connection_Handler *const handler = transport == nullptr ? nullptr : transport->connection_handler ();
+    TAO::SSLIOP::Connection_Handler *const ssl_handler = dynamic_cast<TAO::SSLIOP::Connection_Handler *> (handler);
+    SSL *const ssl = ssl_handler == nullptr ? nullptr : ssl_handler->peer ().ssl ();
+    X509 *const cert = ssl == nullptr ? nullptr : ::SSL_get_peer_certificate (ssl);
+    if (cert == nullptr)
+      return std::string ();
+    std::string const binding = TAO::SSLIOP::Kerberos::tls_server_end_point (cert);
+    ::X509_free (cert);
+    return binding;
+  }
+
+  /// The same key at every interception point of one request.
+  void const *
+  invocation_key (PortableInterceptor::ClientRequestInfo_ptr ri)
+  {
+    TAO_ClientRequestInfo *const cri = dynamic_cast<TAO_ClientRequestInfo *> (ri);
+    return cri == nullptr ? nullptr : static_cast<void const *> (cri->tao_invocation ());
+  }
+
   /// The inbound request's caller certificate chain (leaf first) as a
   /// DER SEQUENCE OF Certificate, or empty.
   std::string
@@ -224,12 +255,50 @@ TAO::SSLIOP::SAS_Client_Interceptor::send_request (PortableInterceptor::ClientRe
         && decapsulate (ssl.component_data, ssl_comp) && ssl_comp.port != 0)
       tls_port = true;
   }
-  // The first TLS mechanism whose authentication layer this client can
-  // use (none, or GSSUP); failing that, the first TLS mechanism.  A
-  // target lists Kerberos first (Phase 3 Q5); this client does not send
-  // Kerberos yet (K3), so it moves on to the GSSUP one.
+  // The ContextEstablishmentPolicy, if the application set one.
+  SecurityLevel3::OwnCredentialsList_var policy_creds;
+  bool client_auth_off = false;
+  {
+    CORBA::Policy_var p = stub->get_policy (SecurityLevel3::ContextEstablishmentPolicyType);
+    SecurityLevel3::ContextEstablishmentPolicy_var cp = SecurityLevel3::ContextEstablishmentPolicy::_narrow (p.in ());
+    if (!CORBA::is_nil (cp.in ()))
+      {
+        policy_creds = cp->creds_list ();
+        client_auth_off = cp->use_client_auth () == SecurityLevel3::FD_DoNotUse;
+      }
+  }
+  // The policy's own credentials if it names any, else the default list.
+  SecurityLevel3::OwnCredentialsList_var creds;
+  if (policy_creds.ptr () != nullptr && policy_creds->length () > 0)
+    creds = new SecurityLevel3::OwnCredentialsList (policy_creds.in ());
+  else if (!CORBA::is_nil (this->curator_.in ()))
+    creds = this->curator_->default_creds_list ();
+  else
+    creds = new SecurityLevel3::OwnCredentialsList;
+
+  // Kerberos credentials allowed to log in to mechanism @a m's service
+  // principal (its target name), which goes to @a service.
+  auto kerberos_for = [&] (CSIIOP::CompoundSecMech const &m, std::string &service)
+    -> TAO::SSLIOP::Kerberos_OwnCredentials * {
+    CSIIOP::AS_ContextSec const &a = m.as_context_mech;
+    if (client_auth_off || (a.target_supports & CSIIOP::EstablishTrustInClient) == 0
+        || octets (a.client_authentication_mech) != TAO::SSLIOP::Kerberos::mech_der ()
+        || !TAO::SSLIOP::Kerberos::parse_exported_name (octets (a.target_name), service))
+      return nullptr;
+    for (CORBA::ULong i = 0; i < creds->length (); ++i)
+      {
+        TAO::SSLIOP::Kerberos_OwnCredentials *const k = TAO::SSLIOP::Kerberos_OwnCredentials::of (creds[i].in ());
+        if (k != nullptr && k->usable () && k->allows (service))
+          return k;
+      }
+    return nullptr;
+  };
+
+  // The TLS mechanism to use: first one this client can log in to with
+  // Kerberos (preferred, R29), then the first whose authentication layer
+  // it can otherwise use (none, or GSSUP), then the first TLS mechanism.
   CORBA::ULong chosen = list.mechanism_list.length ();
-  for (int pass = 0; pass < 2 && chosen == list.mechanism_list.length (); ++pass)
+  for (int pass = 0; pass < 3 && chosen == list.mechanism_list.length (); ++pass)
     for (CORBA::ULong i = 0; i < list.mechanism_list.length (); ++i)
       {
         CSIIOP::CompoundSecMech const &m = list.mechanism_list[i];
@@ -238,10 +307,19 @@ TAO::SSLIOP::SAS_Client_Interceptor::send_request (PortableInterceptor::ClientRe
             || !decapsulate (m.transport_mech.component_data, tls) || tls.addresses.length () == 0)
           continue;
         tls_port = true;
-        std::string const as_oid = octets (m.as_context_mech.client_authentication_mech);
-        bool const usable = (m.as_context_mech.target_supports & CSIIOP::EstablishTrustInClient) == 0
-                            || as_oid.empty () || as_oid == SAS_Target::gssup_mech_der ();
-        if (pass == 1 || usable)
+        bool usable = false;
+        if (pass == 0)
+          {
+            std::string service;
+            usable = kerberos_for (m, service) != nullptr;
+          }
+        else
+          {
+            std::string const as_oid = octets (m.as_context_mech.client_authentication_mech);
+            usable = pass == 2 || (m.as_context_mech.target_supports & CSIIOP::EstablishTrustInClient) == 0
+                     || as_oid.empty () || as_oid == SAS_Target::gssup_mech_der ();
+          }
+        if (usable)
           {
             chosen = i;
             break;
@@ -273,24 +351,66 @@ TAO::SSLIOP::SAS_Client_Interceptor::send_request (PortableInterceptor::ClientRe
   CSIIOP::CompoundSecMech const &mech = list.mechanism_list[chosen];
   CORBA::String_var op = ri->operation ();
 
-  // The ContextEstablishmentPolicy, if the application set one.
-  SecurityLevel3::OwnCredentialsList_var policy_creds;
-  bool client_auth_off = false;
-  {
-    CORBA::Policy_var p = stub->get_policy (SecurityLevel3::ContextEstablishmentPolicyType);
-    SecurityLevel3::ContextEstablishmentPolicy_var cp = SecurityLevel3::ContextEstablishmentPolicy::_narrow (p.in ());
-    if (!CORBA::is_nil (cp.in ()))
-      {
-        policy_creds = cp->creds_list ();
-        client_auth_off = cp->use_client_auth () == SecurityLevel3::FD_DoNotUse;
-      }
-  }
+  // --- Client authentication layer: Kerberos.
+  CSI::GSSToken krb_token;
+  std::string krb_user;
+  std::string krb_service;
+  std::unique_ptr<TAO::SSLIOP::Kerberos::Initiator> krb_login;
+  CSIIOP::AS_ContextSec const &as = mech.as_context_mech;
+  bool const as_required = (as.target_requires & CSIIOP::EstablishTrustInClient) != 0;
+  if ((as.target_supports & CSIIOP::EstablishTrustInClient) != 0
+      && octets (as.client_authentication_mech) == TAO::SSLIOP::Kerberos::mech_der ()
+      && !client_auth_off)
+    {
+      TAO::SSLIOP::Kerberos_OwnCredentials *const found = kerberos_for (mech, krb_service);
+      std::string why;
+      if (found == nullptr)
+        why = krb_service.empty () ? "the target names no Kerberos service principal"
+                                   : "there are no Kerberos credentials for " + krb_service;
+      else if (!over_tls)
+        why = "the call would not go over TLS";
+      else
+        {
+          // Bound to this connection (Phase 3 Q3): the target refuses a
+          // token relayed into another TLS session.
+          std::string const binding = connection_binding (ri);
+          std::string token;
+          if (binding.empty ())
+            why = "cannot read the TLS server certificate to bind the Kerberos token to";
+          else
+            {
+              krb_login.reset (new TAO::SSLIOP::Kerberos::Initiator);
+              if (krb_login->start (found->source (), krb_service, binding, token, why))
+                {
+                  assign (krb_token, token);
+                  krb_user = found->client ();
+                }
+              else
+                krb_login.reset ();
+            }
+        }
+      if (krb_user.empty () && (as_required || found != nullptr))
+        {
+          // Required: refused here.  Not required, but the credentials
+          // could not log in (expired ticket, no TLS): audited, and the
+          // call goes on without client authentication.
+          TAO::Security::Audit_Record rec ("sas_client", false, Reason::SAS_CLIENT_NO_CREDENTIALS);
+          rec.field ("target", krb_service.empty () ? std::string ("(none)") : krb_service)
+            .field ("op", op.in ())
+            .field ("mech", "kerberos")
+            .text ((std::string (as_required ? "the target requires Kerberos and " : "Kerberos not used: ") + why).c_str ());
+          TAO::Security::Audit_Logger::instance ()->write (rec);
+          if (TAO_debug_level > 0)
+            ORBSVCS_DEBUG ((LM_DEBUG, ACE_TEXT ("(%P|%t) SSLIOP SAS client: Kerberos: %C\n"), why.c_str ()));
+          if (as_required)
+            throw CORBA::NO_PERMISSION (CORBA::SystemException::_tao_minor_code (TAO::VMCID, EPERM),
+                                        CORBA::COMPLETED_NO);
+        }
+    }
 
   // --- Client authentication layer: GSSUP.
   CSI::GSSToken gssup_token;
   std::string gssup_user;
-  CSIIOP::AS_ContextSec const &as = mech.as_context_mech;
-  bool const as_required = (as.target_requires & CSIIOP::EstablishTrustInClient) != 0;
   if ((as.target_supports & CSIIOP::EstablishTrustInClient) != 0
       && octets (as.client_authentication_mech) == SAS_Target::gssup_mech_der ()
       && !client_auth_off)
@@ -301,14 +421,6 @@ TAO::SSLIOP::SAS_Client_Interceptor::send_request (PortableInterceptor::ClientRe
         target.clear ();
 
       TAO::SSLIOP::GSSUP_OwnCredentials *found = nullptr;
-      SecurityLevel3::OwnCredentialsList_var creds;
-      // The policy's own credentials if it names any, else the default list.
-      if (policy_creds.ptr () != nullptr && policy_creds->length () > 0)
-        creds = new SecurityLevel3::OwnCredentialsList (policy_creds.in ());
-      else if (!CORBA::is_nil (this->curator_.in ()))
-        creds = this->curator_->default_creds_list ();
-      else
-        creds = new SecurityLevel3::OwnCredentialsList;
       for (CORBA::ULong i = 0; found == nullptr && i < creds->length (); ++i)
         {
           TAO::SSLIOP::GSSUP_OwnCredentials *const g = TAO::SSLIOP::GSSUP_OwnCredentials::of (creds[i].in ());
@@ -392,14 +504,14 @@ TAO::SSLIOP::SAS_Client_Interceptor::send_request (PortableInterceptor::ClientRe
         }
     }
 
-  if (gssup_user.empty () && asserted.empty ())
+  if (gssup_user.empty () && krb_user.empty () && asserted.empty ())
     return;
 
   CSI::EstablishContext ec;
   ec.client_context_id = 0;  // stateless
   ec.authorization_token.length (0);
   ec.identity_token = id;
-  ec.client_authentication_token = gssup_token;
+  ec.client_authentication_token = krb_user.empty () ? gssup_token : krb_token;
   CSI::SASContextBody body;
   body.establish_msg (ec);
   IOP::ServiceContext sc;
@@ -416,10 +528,24 @@ TAO::SSLIOP::SAS_Client_Interceptor::send_request (PortableInterceptor::ClientRe
   wipe (body.establish_msg ().client_authentication_token);
   wipe (sc.context_data);
 
+  // The reply must prove the service (mutual authentication): keep the
+  // login until it arrives.  A oneway call gets no reply to check.
+  if (krb_login && ri->response_expected ())
+    {
+      void const *const key = invocation_key (ri);
+      if (key != nullptr)
+        {
+          ACE_GUARD (TAO_SYNCH_MUTEX, guard, this->pending_lock_);
+          this->pending_[key] = std::move (krb_login);
+        }
+    }
+
   if (SAS_Target::config ().audit_grants)
     {
       TAO::Security::Audit_Record rec ("sas_client", true, Reason::SAS_CLIENT_SENT);
-      if (!gssup_user.empty ())
+      if (!krb_user.empty ())
+        rec.field ("user", krb_user).field ("mech", "kerberos").field ("target", krb_service);
+      else if (!gssup_user.empty ())
         rec.field ("user", gssup_user);
       if (!asserted.empty ())
         rec.field ("asserted", asserted);
@@ -428,13 +554,57 @@ TAO::SSLIOP::SAS_Client_Interceptor::send_request (PortableInterceptor::ClientRe
     }
 }
 
+std::unique_ptr<TAO::SSLIOP::Kerberos::Initiator>
+TAO::SSLIOP::SAS_Client_Interceptor::take_pending (PortableInterceptor::ClientRequestInfo_ptr ri)
+{
+  std::unique_ptr<Kerberos::Initiator> login;
+  void const *const key = invocation_key (ri);
+  if (key == nullptr)
+    return login;
+  ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, guard, this->pending_lock_, login);
+  auto const it = this->pending_.find (key);
+  if (it != this->pending_.end ())
+    {
+      login = std::move (it->second);
+      this->pending_.erase (it);
+    }
+  return login;
+}
+
 void
 TAO::SSLIOP::SAS_Client_Interceptor::check_reply (PortableInterceptor::ClientRequestInfo_ptr ri, bool exception)
 {
+  std::unique_ptr<Kerberos::Initiator> const login = this->take_pending (ri);
   if (!has_mech_list (profile_of (ri)))
     return;
   CSI::SASContextBody body;
-  if (!reply_sas (ri, body) || body._d () != CSI::MTContextError)
+  bool const have_sas = reply_sas (ri, body);
+
+  if (login && !(have_sas && body._d () == CSI::MTContextError))
+    {
+      // R29: the reply must carry the service's Kerberos reply token
+      // (AP-REP), or it cannot be trusted to come from the service.  An
+      // exception without one (raised before the target's security
+      // layer ran) is left as it is: it claims no success.
+      std::string reply_token;
+      if (have_sas && body._d () == CSI::MTCompleteEstablishContext)
+        reply_token = octets (body.complete_msg ().final_context_token);
+      std::string why;
+      if (!(exception && reply_token.empty ()) && !login->finish (reply_token, why))
+        {
+          CORBA::String_var op = ri->operation ();
+          TAO::Security::Audit_Record rec ("sas_client", false, Reason::KRB_SERVER_UNVERIFIED);
+          rec.field ("op", op.in ()).text (why.c_str ());
+          TAO::Security::Audit_Logger::instance ()->write (rec);
+          if (TAO_debug_level > 0)
+            ORBSVCS_DEBUG ((LM_DEBUG, ACE_TEXT ("(%P|%t) SSLIOP SAS client: %C\n"), why.c_str ()));
+          // The target may have run the operation: COMPLETED_MAYBE.
+          throw CORBA::NO_PERMISSION (CORBA::SystemException::_tao_minor_code (TAO::VMCID, EPERM),
+                                      CORBA::COMPLETED_MAYBE);
+        }
+    }
+
+  if (!have_sas || body._d () != CSI::MTContextError)
     return;
   CSI::ContextError const &e = body.error_msg ();
   CORBA::String_var op = ri->operation ();
@@ -472,8 +642,10 @@ TAO::SSLIOP::SAS_Client_Interceptor::receive_exception (PortableInterceptor::Cli
 }
 
 void
-TAO::SSLIOP::SAS_Client_Interceptor::receive_other (PortableInterceptor::ClientRequestInfo_ptr)
+TAO::SSLIOP::SAS_Client_Interceptor::receive_other (PortableInterceptor::ClientRequestInfo_ptr ri)
 {
+  // A forward or retry: the next attempt logs in afresh.
+  (void) this->take_pending (ri);
 }
 
 TAO_END_VERSIONED_NAMESPACE_DECL

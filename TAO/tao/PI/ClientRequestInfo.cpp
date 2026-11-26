@@ -636,6 +636,18 @@ TAO_ClientRequestInfo::tao_ft_retention_id () const
   return this->invocation_->operation_details ().ft_retention_id ();
 }
 
+TAO_Transport *
+TAO_ClientRequestInfo::tao_transport () const
+{
+  return this->invocation_ == nullptr ? nullptr : this->invocation_->transport ();
+}
+
+TAO::Invocation_Base *
+TAO_ClientRequestInfo::tao_invocation () const
+{
+  return this->invocation_;
+}
+
 TAO_END_VERSIONED_NAMESPACE_DECL
 
 #endif /* TAO_HAS_INTERCEPTORS == 1 */

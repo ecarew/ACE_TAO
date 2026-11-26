@@ -142,14 +142,15 @@ my $bind = "$certs/server_cert.pem";
 
 my ($pid, $d, $log);
 sub start_server {
-    my ($which) = @_;
-    $d = "$work/$which";
+    my ($which, $tamper, $tag) = @_;
+    $d = "$work/$which" . (defined $tag ? "_$tag" : '');
     mkdir $d;
     $log = "$d/server.log";
     $pid = fork ();
     if ($pid == 0) {
         $ENV{'ACE_TAO_SECURITY_CONF'} = "$work/$which.conf";
         $ENV{'KRB5_CONFIG'} = "$work/krb5.conf";
+        $ENV{'SAS_TEST_TAMPER_REPLY'} = $tamper if defined $tamper;
         open (STDOUT, '>', $log); open (STDERR, '>&STDOUT');
         exec ("$sas/server", '-ORBSvcConf', "$work/server.svc", '-ORBListenEndpoints', 'iiop://127.0.0.1:', '-d', $d);
         exit 127;
@@ -245,13 +246,97 @@ $ior = scalar (`$iortool -k file://$d/alpha.ior 2>&1`);
 expect ('required: the reference offers only Kerberos, as required', $ior,
         ['^    MECH 0 requires=0x[0-9a-f]+ transport=36$', '^      AS supports=0x40 requires=0x40 mech_octets=11$'],
         ['^    MECH 1 ']);
-expect ('required: a call with no SAS context is refused (SAS_MISSING)', call ('whoami', 'none'),
+# -b turns TAO's own client authentication off: without it TAO refuses the
+# call locally (K3), and the server would never see it.
+expect ('required: a call with no SAS context is refused (SAS_MISSING)', call ('whoami', 'none', '-b'),
         ['^whoami EXCEPTION NO_PERMISSION$'], ['^WHOAMI']);
 expect ('required: a GSSUP login is refused (ContextError 2)', call ('whoami', 'gssup:alice:wonderland'), [@refused2], ['^WHOAMI']);
 expect ('required: a Kerberos login is served', call ('whoami', "krb5:$principal:$bind"), ['^WHOAMI name=\S+alice\@LAB\.TEST ']);
 expect ('  (audited)', log_now (),
         ['reason="SAS_MISSING" .*\] no SAS context; Kerberos client authentication is required',
          'reason="SAS_INVALID_MECH" .*context_error="2"\] Kerberos client authentication is required']);
+stop_server ();
+
+# --- K3: TAO's own Kerberos client (SL3Kerberos) ----------------------------------------
+# TAO's SAS client, not the test's hand-made contexts (-m none): the
+# credentials come from "SL3Kerberos" (-K), the token is bound to the
+# connection, and the target's reply token is checked.
+spit ("$work/krbclient.conf", "mode = test\naudit_sink = stderr\ntime_sync_wait = 0\naudit_grants = on\n");
+chmod (0600, "$work/krbclient.conf");
+copy ("$lab/keytabs/naming.keytab", "$work/naming.keytab") || die "copy keytab: $!";
+chmod (0600, "$work/naming.keytab");
+sub tao {
+    my ($obj, $args, $env) = @_;
+    $env = '' unless defined $env;
+    return scalar (`$env ACE_TAO_SECURITY_CONF=$work/krbclient.conf $sas/client -ORBSvcConf $work/client.svc -k file://$d/$obj.ior -c whoami -m none $args 2>&1`);
+}
+my $served = '^WHOAMI name=\S+alice\@LAB\.TEST authenticated=yes ';
+
+start_server ('krb', undef, 'k3');
+$out = tao ('alpha', '-K target=');
+expect ('K3: after kinit, TAO logs in with Kerberos and is served as alice@LAB.TEST', $out,
+        ['^ACQUIRE OK$', '^SAS REPLY complete ctx=0 stateful=0$', $served]);
+expect ('  (client audit: credentials acquired, Kerberos login sent to the service)', $out,
+        ['reason="KRB_CREDENTIALS_ACQUIRED" principal="alice\@LAB\.TEST" target="\@LAB\.TEST" source="default ccache" lifetime="\d+"',
+         'reason="SAS_CLIENT_SENT" user="alice\@LAB\.TEST" mech="kerberos" target="ace-tao/who\.lab\.test\@LAB\.TEST"'],
+        ['KRB_SERVER_UNVERIFIED']);
+expect ('  (server audit: accepted by Kerberos, bound to the TLS session)', log_now (),
+        ['reason="SAS_ACCEPTED" principal="alice\@LAB\.TEST" .* mech="krb5"']);
+
+$out = tao ('alpha', "-K target= -g alice\@lab.test:file:$work/pw");
+expect ('K3: with both Kerberos and GSSUP credentials, TAO prefers Kerberos', $out,
+        ['^ACQUIRE OK$', $served], ['alice\@lab\.test authenticated']);
+$out = tao ('alpha', "-K target=ace-tao/naming.lab.test\@LAB.TEST -g alice\@lab.test:file:$work/pw");
+expect ('K3: Kerberos credentials for another service are not used; GSSUP is', $out,
+        ['^WHOAMI name=\S+alice\@lab\.test authenticated=yes '], ['mech="kerberos"']);
+$out = tao ('alpha', "-K target=\@OTHER.TEST");
+expect ('K3: ... nor for another realm (the call goes without a login and is denied)', $out,
+        ['^whoami EXCEPTION NO_PERMISSION$'], ['mech="kerberos"', '^WHOAMI']);
+
+$out = tao ('alpha', "-K ccache=FILE:$work/ccache", "KRB5CCNAME=FILE:$work/no_such_ccache");
+expect ('K3: a named ticket cache is used', $out, ['^ACQUIRE OK$', $served]);
+$out = tao ('alpha', '-K target=', "KRB5CCNAME=FILE:$work/no_such_ccache");
+expect ('K3: no ticket: acquisition fails (BAD_PARAM) and is audited', $out,
+        ['^ACQUIRE FAILED BAD_PARAM$', 'reason="SAS_CLIENT_NO_CREDENTIALS" .*\] no Kerberos credentials in the default ticket cache']);
+$out = tao ('alpha', '-K principal=bob@LAB.TEST');
+expect ('K3: a cache without the named principal fails acquisition', $out, ['^ACQUIRE FAILED BAD_PARAM$']);
+
+# A service logging in as itself with a client keytab: its TGT goes to a
+# private in-memory cache, never to the user's cache (KRB5CCNAME).
+$out = tao ('beta', "-K keytab=$work/naming.keytab,principal=ace-tao/naming.lab.test\@LAB.TEST",
+            "KRB5CCNAME=FILE:$work/keytab_must_not_write");
+expect ('K3: a client keytab logs a service in as itself', $out,
+        ['^ACQUIRE OK$', '^WHOAMI name=\S+ace-tao/naming\.lab\.test\@LAB\.TEST authenticated=yes ',
+         'source="keytab \S+naming\.keytab"']);
+expect ('  ... without writing the user\'s ticket cache', -e "$work/keytab_must_not_write" ? 'written' : 'untouched',
+        ['^untouched$']);
+expect ('K3: a keytab without its principal is refused', tao ('beta', "-K keytab=$work/naming.keytab"),
+        ['^ACQUIRE FAILED BAD_PARAM$', 'a client keytab needs the client principal']);
+stop_server ();
+
+# Mutual authentication: a server that drops or corrupts its Kerberos
+# reply token is not trusted, although it served the call.
+foreach my $how ('drop', 'flip') {
+    start_server ('krb', $how, $how);
+    $out = tao ('alpha', '-K target=');
+    expect ("K3: a reply whose Kerberos token was ${how}ped is rejected (NO_PERMISSION)", $out,
+            ['^SAS REPLY complete ', '^whoami EXCEPTION NO_PERMISSION$', 'reason="KRB_SERVER_UNVERIFIED"'],
+            ['^WHOAMI']);
+    expect ('  (audited with the reason)', $out,
+            [$how eq 'drop' ? 'KRB_SERVER_UNVERIFIED.*\] the target returned no Kerberos reply token'
+                            : 'KRB_SERVER_UNVERIFIED.*\] the Kerberos reply does not verify as ace-tao/who\.lab\.test\@LAB\.TEST']);
+    expect ('  (TAO\'s GSSUP client is not affected)', tao ('alpha', "-g alice\@lab.test:file:$work/pw"),
+            ['^WHOAMI name=\S+alice\@lab\.test authenticated=yes ']);
+    stop_server ();
+}
+
+start_server ('required', undef, 'k3');
+expect ('K3: required: TAO\'s Kerberos client is served', tao ('alpha', '-K target='), [$served]);
+$out = tao ('alpha', "-g alice\@lab.test:file:$work/pw");
+expect ('K3: required, no Kerberos credentials: refused locally, without a login', $out,
+        ['^whoami EXCEPTION NO_PERMISSION$',
+         'reason="SAS_CLIENT_NO_CREDENTIALS" .*mech="kerberos"\] the target requires Kerberos and there are no Kerberos credentials'],
+        ['^SAS REPLY (complete|error)', '^WHOAMI']);
 stop_server ();
 
 # --- the keytab self-check -----------------------------------------------------------------

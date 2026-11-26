@@ -154,6 +154,22 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
   first TLS credential of such a policy's list rather than only the
   first entry. New test orbsvcs/tests/Security/SAS_Client.
 
+. CSIv2 Kerberos logins from TAO clients (Phase 3 K3; needs the gssapi
+  build). The new SecurityLevel3 acquisition method "SL3Kerberos" takes an
+  SSLIOP::KerberosAuthData: a ticket cache (default KRB5CCNAME, as left by
+  kinit) or, for a service, a client keytab and principal, whose TGT goes
+  to a private in-memory cache; and the target names the credentials may
+  log in to (a service principal, or @REALM; default the client's realm).
+  No password passes through TAO. TAO's SAS client prefers a Kerberos
+  mechanism it has credentials for over GSSUP, sends the token only over
+  TLS, bound to the connection (the server certificate's RFC 5929 hash),
+  and asks for mutual authentication: a reply without the service's valid
+  Kerberos reply token raises NO_PERMISSION (COMPLETED_MAYBE) and is
+  audited as KRB_SERVER_UNVERIFIED. A target that requires Kerberos, with
+  no usable credentials, is refused locally. TAO-specific accessors
+  TAO_ClientRequestInfo::tao_transport () and tao_invocation () let client
+  interceptors reach the request's connection.
+
 . CSIv2 Kerberos logins on the TAO target (Phase 3 K2; needs the gssapi
   build). csiv2_kerberos = off | supported | required, with krb_principal
   (the service principal), krb_keytab and optionally krb_rcache: a client

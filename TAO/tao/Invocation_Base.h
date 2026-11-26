@@ -34,6 +34,7 @@ TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 class TAO_Service_Context;
 class TAO_Operation_Details;
 class TAO_Stub;
+class TAO_Transport;
 
 namespace TAO
 {
@@ -194,6 +195,12 @@ namespace TAO
     /// of a remote request, and if not, it will be considered to be
     /// part of a collocated request.
     bool is_remote_request() const;
+
+    /// The transport a remote request goes out on, or null (collocated).
+    /// TAO-specific: lets a client interceptor bind a token to the
+    /// connection, as CSIv2 Kerberos channel bindings do.  Not virtual,
+    /// so the class layout is unchanged.
+    TAO_Transport *transport () const;
 
   protected:
     /// Helper method to invoke send_request interception call to all

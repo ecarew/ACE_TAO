@@ -5,20 +5,100 @@
 // With SAS_TEST_NO_VERIFIER set it installs none, so a gssup_store in
 // security.conf supplies the verifier (the GSSUP_Store test).
 // Writes alpha.ior and beta.ior into the directory given with -d.
+//
+// Test hook: with SAS_TEST_TAMPER_REPLY set to "drop" or "flip", the
+// server removes or corrupts the final_context_token (the Kerberos reply
+// token) of every CompleteEstablishContext it sends, as a server that is
+// not the Kerberos service would, so that a test can check TAO's client
+// rejects the reply (Phase 3 K3).
 
 #include "TestS.h"
 
 #include "orbsvcs/SecurityLevel3C.h"
+#include "orbsvcs/CSIC.h"
+#include "orbsvcs/Security/CSI_Utils.h"
 #include "orbsvcs/Security/GSSUP_Verifier.h"
+
+#include "tao/PI/PI.h"
+#include "tao/PI_Server/PI_Server.h"
+#include "tao/LocalObject.h"
+#include "tao/ORBInitializer_Registry.h"
 
 #include "ace/Get_Opt.h"
 #include "ace/OS_NS_stdio.h"
 #include "ace/OS_NS_stdlib.h"
+#include "ace/OS_NS_string.h"
 
 #include <string>
 
 namespace
 {
+  /// Rewrites the reply's SAS CompleteEstablishContext (test hook).
+  class Tamper_Interceptor
+    : public virtual PortableInterceptor::ServerRequestInterceptor,
+      public virtual ::CORBA::LocalObject
+  {
+  public:
+    explicit Tamper_Interceptor (std::string const &how) : how_ (how) {}
+    char *name () override { return CORBA::string_dup ("SAS_Test_Tamper"); }
+    void destroy () override {}
+    void receive_request_service_contexts (PortableInterceptor::ServerRequestInfo_ptr) override {}
+    void receive_request (PortableInterceptor::ServerRequestInfo_ptr) override {}
+    void send_reply (PortableInterceptor::ServerRequestInfo_ptr ri) override { this->tamper (ri); }
+    void send_exception (PortableInterceptor::ServerRequestInfo_ptr ri) override { this->tamper (ri); }
+    void send_other (PortableInterceptor::ServerRequestInfo_ptr) override {}
+
+  private:
+    void
+    tamper (PortableInterceptor::ServerRequestInfo_ptr ri)
+    {
+      IOP::ServiceContext_var sc;
+      try
+        {
+          sc = ri->get_reply_service_context (IOP::SecurityAttributeService);
+        }
+      catch (CORBA::BAD_PARAM const &)
+        {
+          return;
+        }
+      CSI::SASContextBody body;
+      if (!TAO::CSI_Utils::extract_sas_service_context (sc.in (), body) || body._d () != CSI::MTCompleteEstablishContext)
+        return;
+      CSI::CompleteEstablishContext done = body.complete_msg ();
+      CSI::GSSToken &t = done.final_context_token;
+      if (t.length () == 0)
+        return;
+      if (this->how_ == "drop")
+        t.length (0);
+      else
+        t[t.length () / 2] ^= 0x5A;
+      body.complete_msg (done);
+      IOP::ServiceContext out;
+      TAO::CSI_Utils::create_sas_service_context (body, out);
+      ri->add_reply_service_context (out, true);
+    }
+
+    std::string const how_;
+  };
+
+  class Tamper_Initializer
+    : public virtual PortableInterceptor::ORBInitializer,
+      public virtual ::CORBA::LocalObject
+  {
+  public:
+    explicit Tamper_Initializer (std::string const &how) : how_ (how) {}
+    void pre_init (PortableInterceptor::ORBInitInfo_ptr) override {}
+    void
+    post_init (PortableInterceptor::ORBInitInfo_ptr info) override
+    {
+      PortableInterceptor::ServerRequestInterceptor_var si = new Tamper_Interceptor (this->how_);
+      info->add_server_request_interceptor (si.in ());
+    }
+
+  private:
+    std::string const how_;
+  };
+
   /// Test verifier: fixed users and passwords.
   class Test_Verifier : public TAO::Security::GSSUP_Verifier
   {
@@ -119,6 +199,15 @@ ACE_TMAIN (int argc, ACE_TCHAR *argv[])
       static Test_Verifier verifier;
       if (ACE_OS::getenv ("SAS_TEST_NO_VERIFIER") == nullptr)
         TAO::Security::GSSUP_Verifier::install (&verifier);
+      char const *const tamper = ACE_OS::getenv ("SAS_TEST_TAMPER_REPLY");
+      if (tamper != nullptr && *tamper != '\0')
+        {
+          // Registered before SSLIOP's, so its send_reply runs after
+          // SSLIOP has set the reply context.
+          PortableInterceptor::ORBInitializer_var init = new Tamper_Initializer (tamper);
+          PortableInterceptor::register_orb_initializer (init.in ());
+          ACE_OS::printf ("TAMPER %s\n", tamper);
+        }
       CORBA::ORB_var orb = CORBA::ORB_init (argc, argv);
       std::string dir = ".";
       ACE_Get_Opt opts (argc, argv, ACE_TEXT ("d:"));

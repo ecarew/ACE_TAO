@@ -107,6 +107,30 @@ module SSLIOP {
     string password_source;
     string target_name;
   };
+
+  /**
+   * Arguments of the "SL3Kerberos" acquisition method: CSIv2 Kerberos
+   * credentials for a TAO client (requires SSLIOP built with the MPC
+   * feature gssapi).  No password passes through TAO.
+   *
+   *   ccache       the ticket cache to use ("FILE:/path", "KCM:", ...);
+   *                empty: the default (KRB5CCNAME), as left by kinit.
+   *                With a keytab, empty means a private in-memory cache.
+   *   keytab       a client keytab, for a service acting as itself;
+   *                empty: use the ticket cache alone.
+   *   principal    the client principal (user@REALM); required with a
+   *                keytab, otherwise it picks that principal's ticket.
+   *   target_name  the services the credentials may log in to: one
+   *                service principal ("ace-tao/naming.lab.test@LAB.TEST"),
+   *                or "@REALM" for any service of that realm; empty means
+   *                the client principal's own realm.
+   */
+  struct KerberosAuthData {
+    string ccache;
+    string keytab;
+    string principal;
+    string target_name;
+  };
 # pragma prefix "omg.org"
 
 # pragma prefix "omg.org"

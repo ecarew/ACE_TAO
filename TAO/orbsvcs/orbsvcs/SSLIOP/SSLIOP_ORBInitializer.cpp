@@ -5,6 +5,7 @@
 //#include "SSLIOP_IORInterceptor.h"
 #include "orbsvcs/SSLIOP/SSLIOP_CredentialsAcquirerFactory.h"
 #include "orbsvcs/SSLIOP/SSLIOP_GSSUP_Credentials.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Kerberos_Credentials.h"
 #include "orbsvcs/SSLIOP/SSLIOP_SAS_Client.h"
 
 #include "orbsvcs/Security/SL3_SecurityCurrent.h"
@@ -192,6 +193,13 @@ TAO::SSLIOP::ORBInitializer::post_init (
                     TAO::SSLIOP::GSSUP_CredentialsAcquirerFactory,
                     CORBA::NO_MEMORY ());
   tao_curator->register_acquirer_factory ("SL3GSSUP", gssup_factory);
+
+  // CSIv2 Kerberos credentials from a ticket cache or client keytab (K3).
+  TAO::SSLIOP::Kerberos_CredentialsAcquirerFactory *krb_factory = nullptr;
+  ACE_NEW_THROW_EX (krb_factory,
+                    TAO::SSLIOP::Kerberos_CredentialsAcquirerFactory,
+                    CORBA::NO_MEMORY ());
+  tao_curator->register_acquirer_factory ("SL3Kerberos", krb_factory);
 
   // The client side of the CSIv2 SAS protocol (R15), on remote calls.
   CORBA::Object_var cur_obj = info->resolve_initial_references ("SSLIOPCurrent");

@@ -1,4 +1,5 @@
 #include "tao/Invocation_Base.h"
+#include "tao/Remote_Invocation.h"
 #include "tao/Stub.h"
 #include "tao/operation_details.h"
 #include "tao/ORB_Core.h"
@@ -55,6 +56,17 @@ namespace TAO
     TAO_INTERCEPTOR (cri_adapter_= nullptr);
     TAO_INTERCEPTOR (sri_adapter_= nullptr);
   }
+
+#if TAO_HAS_INTERCEPTORS == 1
+  TAO_Transport *
+  Invocation_Base::transport () const
+  {
+    // Only Remote_Invocation marks its requests remote.
+    if (this->is_remote_request_)
+      return static_cast<Remote_Invocation const *> (this)->Remote_Invocation::transport ();
+    return nullptr;
+  }
+#endif /* TAO_HAS_INTERCEPTORS == 1 */
 
   TAO_Service_Context &
   Invocation_Base::request_service_context ()

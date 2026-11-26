@@ -6,7 +6,7 @@ project(*idl) : taoidldefaults {
   custom_only = 1
 }
 
-project(*Server) : taoserver, orbsvcslib, security, ssliop {
+project(*Server) : taoserver, orbsvcslib, security, ssliop, pi_server {
   after += *idl
   exename = server
   Source_Files {

@@ -41,6 +41,7 @@
 TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 
 class TAO_Service_Context;
+class TAO_Transport;
 
 namespace TAO
 {
@@ -183,6 +184,15 @@ public:
 
   /// Get the FT request retention ID for this request.
   CORBA::Long tao_ft_retention_id () const;
+
+  /// The transport the request goes out on, or null (collocated).
+  /// TAO-specific; for interceptors that bind data to the connection.
+  TAO_Transport *tao_transport () const;
+
+  /// The invocation this request belongs to: the same object at every
+  /// interception point of one request (the ClientRequestInfo is not).
+  /// TAO-specific; lets an interceptor match a reply to its request.
+  TAO::Invocation_Base *tao_invocation () const;
 
   /*
   * End proprietary FT methods.
