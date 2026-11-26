@@ -108,6 +108,11 @@ namespace TAO
       constexpr char const ASSERTER_LIST_LOADED[] = "ASSERTER_LIST_LOADED";
       constexpr char const ASSERTER_LIST_REJECTED[] = "ASSERTER_LIST_REJECTED";
       constexpr char const ASSERTER_LIST_SIGNED[] = "ASSERTER_LIST_SIGNED";
+      /// Signed policy tables of the role model (Phase 3 T1): a table
+      /// accepted, a file refused (the record says why), a table signed.
+      constexpr char const ROLES_TABLE_LOADED[] = "ROLES_TABLE_LOADED";
+      constexpr char const ROLES_TABLE_REJECTED[] = "ROLES_TABLE_REJECTED";
+      constexpr char const ROLES_TABLE_SIGNED[] = "ROLES_TABLE_SIGNED";
       // Client side (W6)
       constexpr char const SAS_CLIENT_NO_CREDENTIALS[] = "SAS_CLIENT_NO_CREDENTIALS";
       constexpr char const SAS_CLIENT_REFUSED[] = "SAS_CLIENT_REFUSED";

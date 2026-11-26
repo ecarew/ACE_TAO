@@ -11,6 +11,7 @@
 #include "orbsvcs/SSLIOP/SSLIOP_GSSUP_Store.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Asserter_List.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Kerberos.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Policy_Tables.h"
 #include "tao/Security_Mode.h"
 #include "ace/OS_NS_strings.h"
 #include "ace/Read_Buffer.h"
@@ -418,6 +419,44 @@ namespace
                                      + std::to_string (deny->max_age_days ()) + ")").c_str ());
           else
             Self_Check::contribute ("denylist", Self_Check::CHECK_OK, summary.c_str ());
+        }
+    }
+
+    // Role-model policy tables (Phase 3 T1, R39): with roles_dir set,
+    // all three signed tables are required, from a pinned roles signer
+    // that is not the deny-list signer (D3.7).
+    {
+      TAO::SSLIOP::Policy_Tables *const tables = TAO::SSLIOP::Policy_Tables::instance ();
+      if (tables->configured ())
+        {
+          bool const prod = host.mode == TAO_Security_Mode::MODE_PROD;
+          std::string deny_pin = host.get ("denylist_signer_sha256");
+          for (char &c : deny_pin)
+            c = static_cast<char> (ACE_OS::ace_tolower (c));
+          std::string summary;
+          std::string error;
+          if (tables->signer ().empty ())
+            Self_Check::contribute ("roles", bad, "roles_dir is set but roles_signer is not");
+          else if (prod && tables->pin ().empty ())
+            Self_Check::contribute ("roles", bad, "roles_signer_sha256 is not set: the roles signer is not pinned");
+          else if (!tables->pin ().empty () && tables->pin () == deny_pin)
+            Self_Check::contribute ("roles", bad,
+                                    "the roles signer is the deny-list signer: policy tables need their own key (D3.7)");
+          else if (!tables->load (summary, error))
+            Self_Check::contribute ("roles", bad, ("policy tables incomplete (" + summary + "): " + error).c_str ());
+          else
+            {
+              std::string banner;
+              for (int k = 0; k < TAO::SSLIOP::Policy_Tables::KIND_COUNT; ++k)
+                banner += (k == 0 ? "v" : "/v")
+                          + std::to_string (tables->version (static_cast<TAO::SSLIOP::Policy_Tables::Kind> (k)));
+              Self_Check::banner_field ("roles", banner.c_str ());
+              if (tables->state_path ().empty ())
+                Self_Check::contribute ("roles", prod ? Self_Check::CHECK_WARN : Self_Check::CHECK_OK,
+                                        (summary + "; roles_state is not set: a restart could roll a table back").c_str ());
+              else
+                Self_Check::contribute ("roles", Self_Check::CHECK_OK, summary.c_str ());
+            }
         }
     }
 

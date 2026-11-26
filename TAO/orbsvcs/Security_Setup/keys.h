@@ -27,6 +27,8 @@ int setup_access (int argc, ACE_TCHAR *argv[]);
 int setup_asserters (int argc, ACE_TCHAR *argv[]);
 /// user add|passwd|lock|unlock|remove|list ... (user.cpp)
 int setup_user (int argc, ACE_TCHAR *argv[]);
+/// rights|grants|roles sign|check ... (roles.cpp); @a what names the table
+int setup_tables (char const *what, int argc, ACE_TCHAR *argv[]);
 
 // Shared by keys.cpp, denylist.cpp and access.cpp.
 typedef struct evp_pkey_st EVP_PKEY;

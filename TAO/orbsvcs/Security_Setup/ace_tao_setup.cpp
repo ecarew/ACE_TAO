@@ -96,7 +96,8 @@ namespace
     "  access sign|check|test ...\n"
     "  user add|passwd|lock|unlock|remove|list ...\n"
     "  asserters sign|check ...\n"
-    "  (key, cert, denylist, access, asserters or user alone prints their options)\n"
+    "  rights|grants|roles sign|check ...   (the role model's signed policy tables)\n"
+    "  (key, cert, denylist, access, asserters, user, rights, grants or roles alone prints their options)\n"
     "  (check --gate exits 2 only on failures, 0 otherwise)\n";
 
   int
@@ -855,6 +856,8 @@ ACE_TMAIN (int argc, ACE_TCHAR *argv[])
     return setup_user (rest, args);
   if (cmd == "asserters")
     return setup_asserters (rest, args);
+  if (cmd == "rights" || cmd == "grants" || cmd == "roles")
+    return setup_tables (cmd.c_str (), rest, args);
   if (cmd == "run")
     return setup_run (rest, args, prog, conf_path.c_str ());
   return usage (("unknown command " + cmd).c_str ());

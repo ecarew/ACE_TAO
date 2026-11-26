@@ -154,6 +154,26 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
   first TLS credential of such a policy's list rather than only the
   first entry. New test orbsvcs/tests/Security/SAS_Client.
 
+. Signed policy tables for the role model (Phase 3 T1). A new loader,
+  TAO::SSLIOP::Policy_Tables, reads the required-rights, grants and
+  role-map tables from roles_dir: dated files (KIND-YYYY-MM-DD.txt, or
+  .N.txt for a further revision that day) beside detached signatures,
+  each starting with signed table, version and issued lines. The winner
+  for each table is the highest version among files that verify with the
+  pinned roles signer (roles_signer, roles_signer_sha256), name their own
+  table, and carry a signed issued date equal to the one in their name, so
+  an older table renamed to look newer is refused. With roles_state, the
+  highest version accepted is recorded and a lower one is refused after a
+  restart. Files are re-read every roles_reload seconds (30); a failing
+  file leaves the last good table in force and is audited once
+  (ROLES_TABLE_LOADED, ROLES_TABLE_REJECTED). With roles_dir set the
+  self-check needs all three tables and a roles signer that is not the
+  deny-list signer, and fails prod otherwise. New ace-tao-setup commands
+  rights|grants|roles sign (next version, dated name, signature written
+  first) and check (which file a service would load, and why the others
+  are refused). The tables' contents and the decisions they drive come
+  in T2 and T3. New test orbsvcs/tests/Security/Roles.
+
 . SSLIOP with OpenSSL 3: -SSLEcName sets the key-exchange groups with
   SSL_CTX_set1_groups_list () (OpenSSL 1.1.1 and later) instead of the
   deprecated EC_KEY and SSL_CTX_set_tmp_ecdh (), which also leaked the

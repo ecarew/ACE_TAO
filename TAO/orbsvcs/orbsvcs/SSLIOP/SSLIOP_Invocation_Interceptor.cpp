@@ -1,5 +1,6 @@
 #include "orbsvcs/Log_Macros.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Invocation_Interceptor.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Policy_Tables.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Current.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Deny_List.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Access_List.h"
@@ -152,6 +153,10 @@ TAO::SSLIOP::Server_Invocation_Interceptor::receive_request (
 
   if (TAO_debug_level >= 3)
     ORBSVCS_DEBUG ((LM_DEBUG, "SSLIOP (%P|%t) Interceptor (context), ssl=%d collocated=%d\n", !(no_ssl), this->collocated_));
+
+  // Pick up newly signed policy tables (Phase 3 T1); a cheap check
+  // between reload intervals.
+  TAO::SSLIOP::Policy_Tables::instance ()->refresh ();
 
   // The deny-list is checked on every request too, so a certificate
   // listed after its connection was made is refused from then on.
