@@ -128,10 +128,13 @@ namespace
 
   /// RFC 5929 tls-server-end-point data for the TLS connection the
   /// request goes out on (the server certificate's hash), or empty if
-  /// it is not an SSLIOP connection.
+  /// it is not an SSLIOP connection.  Empty in a build without TAO's
+  /// interceptor support (CORBA/e), which has no TAO_ClientRequestInfo:
+  /// there TAO sends no Kerberos login.
   std::string
   connection_binding (PortableInterceptor::ClientRequestInfo_ptr ri)
   {
+#if (TAO_HAS_INTERCEPTORS == 1)
     TAO_ClientRequestInfo *const cri = dynamic_cast<TAO_ClientRequestInfo *> (ri);
     TAO_Transport *const transport = cri == nullptr ? nullptr : cri->tao_transport ();
     TAO_Connection_Handler *const handler = transport == nullptr ? nullptr : transport->connection_handler ();
@@ -143,14 +146,23 @@ namespace
     std::string const binding = TAO::SSLIOP::Kerberos::tls_server_end_point (cert);
     ::X509_free (cert);
     return binding;
+#else
+    ACE_UNUSED_ARG (ri);
+    return std::string ();
+#endif /* TAO_HAS_INTERCEPTORS */
   }
 
   /// The same key at every interception point of one request.
   void const *
   invocation_key (PortableInterceptor::ClientRequestInfo_ptr ri)
   {
+#if (TAO_HAS_INTERCEPTORS == 1)
     TAO_ClientRequestInfo *const cri = dynamic_cast<TAO_ClientRequestInfo *> (ri);
     return cri == nullptr ? nullptr : static_cast<void const *> (cri->tao_invocation ());
+#else
+    ACE_UNUSED_ARG (ri);
+    return nullptr;
+#endif /* TAO_HAS_INTERCEPTORS */
   }
 
   /// The inbound request's caller certificate chain (leaf first) as a
