@@ -602,8 +602,9 @@ namespace
   };
 
   constexpr unsigned long MAX_PAC_GROUPS = 4096;
-  /// SE_GROUP_USE_FOR_DENY_ONLY: a SID that may only deny, never grant.
-  constexpr unsigned long SE_GROUP_USE_FOR_DENY_ONLY = 0x10;
+  /// MS-PAC SE_GROUP_USE_FOR_DENY_ONLY (0x10): a SID that may only deny,
+  /// never grant.  Named apart from the Windows SDK macro of that name.
+  constexpr unsigned long PAC_GROUP_DENY_ONLY = 0x10;
 
   /// A deferred RPC_UNICODE_STRING body (conformant varying array of
   /// UTF-16), returned as ASCII with '?' for anything else.
@@ -783,7 +784,7 @@ TAO::SSLIOP::Kerberos::parse_logon_info (std::string const &ndr, Pac_Info &info,
   info.groups.clear ();
   std::set<std::string> seen;
   auto add = [&info, &seen] (std::string const &sid, unsigned long attributes) {
-    if (!sid.empty () && (attributes & SE_GROUP_USE_FOR_DENY_ONLY) == 0 && seen.insert (sid).second)
+    if (!sid.empty () && (attributes & PAC_GROUP_DENY_ONLY) == 0 && seen.insert (sid).second)
       info.groups.push_back (sid);
   };
   for (auto const &g : groups)
