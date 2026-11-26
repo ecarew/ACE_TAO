@@ -306,13 +306,16 @@ TAO::SSLIOP::SAS_Client_Interceptor::send_request (PortableInterceptor::ClientRe
             found = g;
         }
 
-      // On the wire the username is scoped by the target name: a user
-      // of the target's own realm goes as the bare name ("alice" with
-      // target "@lab.test"), as the target's verifier expects.
+      // The username goes as a scoped-username (CORBA 3.3 Part 2,
+      // 10.2.4.1.1): a user of the target's own scope as its quoted name
+      // alone ("alice" for target "@lab.test"), any other in full.
       std::string wire_user = found != nullptr ? found->username () : std::string ();
-      if (wire_user.size () > target.size () && target[0] == '@'
-          && wire_user.compare (wire_user.size () - target.size (), target.size (), target) == 0)
-        wire_user.resize (wire_user.size () - target.size ());
+      {
+        std::string value;
+        std::string scope;
+        if (SAS_Target::split_scoped (wire_user, value, scope) && !value.empty () && scope == target)
+          wire_user = SAS_Target::quote_scoped (value);
+      }
 
       if (found != nullptr && over_tls
           && SAS_Target::encode_gssup_token (wire_user, found->password (), target_octets, gssup_token))

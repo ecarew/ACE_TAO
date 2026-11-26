@@ -60,6 +60,7 @@ my $sign = "--key PEM:$certs/signer_key_enc.pem --password-file $certs/password.
 my $acl = "$work/access.list";
 spit ($acl, "version 0\nissued 2026-01-01T00:00:00Z\n"
           . "allow alice\@lab.test /RootPOA/Who/alpha whoami\n"
+          . "allow bob\\\@corp\@lab.test /RootPOA/Who/alpha whoami\n"
           . "allow spiffe://ace-tao.test/client /RootPOA/Who/alpha poke\n"
           . "allow * /RootPOA/Who/beta\n");
 my $o = `$tool --conf /dev/null access sign $sign --file $acl --bump 2>&1`;
@@ -130,6 +131,27 @@ expect ('GSSUP login: CompleteEstablishContext, stateless; the servant sees the 
          '^WHOAMI name=oid:2\.23\.130\.1\.2\.1:alice\@lab\.test authenticated=yes alt=TAO:SPIFFEID:spiffe://ace-tao\.test/client alt=SL3:X509DirectoryPathName:CN=transport-client$']);
 expect ('a non-zero client_context_id is answered statelessly (R12)', call ('alpha', 'whoami', 'gssup:alice:wonderland', '-i 77'),
         ['^SAS REPLY complete ctx=77 stateful=0$', '^WHOAMI name=']);
+
+# Scoped-usernames (CORBA 3.3 Part 2, 10.2.4.1.1 and 10.2.5.2).
+expect ('GSSUP username in full scoped form (alice@lab.test): served as the same user',
+        call ('alpha', 'whoami', 'gssup:alice@lab.test:wonderland'),
+        ['^SAS REPLY complete ctx=0 stateful=0$', '^WHOAMI name=oid:2\.23\.130\.1\.2\.1:alice\@lab\.test authenticated=yes ']);
+expect ('GSSUP username with a quoted @ (bob\\@corp@lab.test): the verifier sees bob@corp',
+        call ('alpha', 'whoami', q{'gssup:bob\@corp@lab.test:builder'}),
+        ['^SAS REPLY complete ctx=0 stateful=0$', '^WHOAMI name=oid:2\.23\.130\.1\.2\.1:bob\\\@corp\@lab\.test authenticated=yes ']);
+expect ('  (and the bare quoted form, bob\\@corp, too)',
+        call ('alpha', 'whoami', q{'gssup:bob\@corp:builder'}),
+        ['^SAS REPLY complete ctx=0 stateful=0$', '^WHOAMI name=oid:2\.23\.130\.1\.2\.1:bob\\\@corp\@lab\.test ']);
+foreach my $case (['username scoped to another realm (alice@other.test)', 'gssup:alice@other.test:wonderland'],
+                  ['username with two unquoted @ (bob@corp@lab.test)', 'gssup:bob@corp@lab.test:builder'],
+                  ['username with a stray backslash', q{'gssup:al\ice:wonderland'}],
+                  ['username with an empty scope (alice@)', 'gssup:alice@:wonderland']) {
+    expect ("$case->[0]: ContextError major 1, GSSUP error UNSPECIFIED", call ('alpha', 'whoami', $case->[1]),
+            ['^SAS REPLY error ctx=0 major=1 minor=1 gssup_error=1$', '^whoami EXCEPTION NO_PERMISSION$'], ['^WHOAMI']);
+}
+expect ('  (audited: scope mismatch and malformed name told apart)', slurp ($log),
+        ['reason="GSSUP_FAILED" .*\] the username\'s scope is not this service\'s GSSUP target name',
+         'reason="GSSUP_FAILED" .*\] the username is not a well-formed scoped-username']);
 
 my $wrong = call ('alpha', 'whoami', 'gssup:alice:wrong-password');
 my $nouser = call ('alpha', 'whoami', 'gssup:bob:wonderland');

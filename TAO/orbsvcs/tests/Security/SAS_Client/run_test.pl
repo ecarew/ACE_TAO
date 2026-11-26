@@ -65,6 +65,7 @@ spit ($tconf, "mode = test\naudit_sink = stderr\ndenylist_signer = $certs/signer
 my $acl = "$work/access.list";
 spit ($acl, "version 0\nissued 2026-01-01T00:00:00Z\n"
           . "allow alice\@lab.test /RootPOA/Who/alpha whoami\n"
+          . "allow bob\\\@corp\@lab.test /RootPOA/Who/alpha whoami\n"
           . "allow * /RootPOA/Who/beta\n");
 my $o = `$tool --conf /dev/null access sign $sign --file $acl --bump 2>&1`;
 die "access sign failed:\n$o" unless $? == 0 && -s "$acl.sig";
@@ -100,8 +101,9 @@ chmod (0600, "$work/client.conf");
 # Password sources (test data only).
 spit ("$work/pw_good", "wonderland\n");
 spit ("$work/pw_bad", "not-the-password\n");
+spit ("$work/pw_bob", "builder\n");
 spit ("$work/pw_open", "wonderland\n");
-chmod (0600, "$work/pw_good", "$work/pw_bad");
+chmod (0600, "$work/pw_good", "$work/pw_bad", "$work/pw_bob");
 chmod (0644, "$work/pw_open");
 
 sub svc {
@@ -181,6 +183,12 @@ expect ('a password file readable by others is refused', $o,
 $o = call ('main', 'beta', 'poke', "-g alice\@lab.test:wonderland");
 expect ('a password given in place of a source is refused (never from arguments)', $o,
         ['^ACQUIRE FAILED BAD_PARAM$', 'unknown password_source'], ['SAS_CLIENT_SENT']);
+# Scoped-usernames (CORBA 3.3 Part 2, 10.2.5.2): an '@' inside the name is quoted.
+$o = call ('main', 'alpha', 'whoami', q{-g 'bob\@corp@lab.test:file:} . "$work/pw_bob'");
+expect ('a username with a quoted @ (bob\\@corp@lab.test): sent quoted, served as that user', $o,
+        ['^ACQUIRE OK$', '^SAS REPLY complete ctx=0 stateful=0$', '^WHOAMI name=oid:2\.23\.130\.1\.2\.1:bob\\\@corp\@lab\.test ']);
+$o = call ('main', 'beta', 'poke', "-g bob\@corp\@lab.test:file:$work/pw_bob");
+expect ('a username with two unquoted @ is refused', $o, ['^ACQUIRE FAILED BAD_PARAM$', 'bad username']);
 $o = call ('main', 'beta', 'poke', "-g alice:file:$work/pw_good");
 expect ('a username without a realm needs an explicit target name', $o, ['^ACQUIRE FAILED BAD_PARAM$', 'no target name']);
 stop_server ('main');

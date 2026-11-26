@@ -26,6 +26,17 @@
  *  it.  Anything else is ContextError 1 (ASSERTION_REJECTED), or 2 for an
  *  unsupported token type or with no asserter list.
  *
+ *  Anonymous assertion (allow_anonymous_assertion): off (default);
+ *  listed (only listed asserters whose entry allows "anonymous"); on
+ *  (any caller, authenticated or not: CSIv2 rule 4, CORBA 3.3 Part 2
+ *  Table 10.4).  An anonymous caller is not an identified caller, so the
+ *  access list decides what, if anything, it may do.
+ *
+ *  GSSUP usernames and asserted GSSUP names are scoped-usernames (10.2.5.2):
+ *  "name", "name@scope" or "@scope", with '@' and '\' inside a part
+ *  quoted by '\'.  A username's scope, when given, must be the service's
+ *  gssup_target.
+ *
  *  security.conf keys: csiv2 (off, supported, required: required means a
  *  request without a SAS context is refused), csiv2_gssup (off,
  *  supported, required), gssup_target (the service's GSSUP target
@@ -69,7 +80,8 @@ namespace TAO
         std::string target;     ///< GSSUP target name, "@realm"
         bool audit_grants = false;
         bool assertion = false;  ///< csiv2_asserters is set
-        bool anonymous = false;  ///< allow_anonymous_assertion = on
+        /// allow_anonymous_assertion: 0 off, 1 listed, 2 on (any caller)
+        int anonymous = 0;
         /// Client side: assert the current request's caller on calls a
         /// servant makes (csiv2_assert_caller = on).
         bool assert_caller = false;
@@ -96,6 +108,18 @@ namespace TAO
 
       /// @name GSSUP encoding (also used by clients and tests)
       //@{
+      /**
+       * Splits a scoped-username (CORBA 3.3 Part 2, 10.2.5.2) at its
+       * delimiting '@', unquoting both parts.  @a scope keeps the '@'
+       * ("@lab.test") and is empty when there is none.  False when the
+       * name is malformed: a second unquoted '@', a '\' that quotes
+       * anything but '@' or '\', or an empty part beside the '@'.
+       */
+      static bool split_scoped (std::string const &name, std::string &value, std::string &scope);
+
+      /// @a part with '@' and '\' quoted, for use in a scoped-username.
+      static std::string quote_scoped (std::string const &part);
+
       /// DER encoding of the GSSUP mechanism OID 2.23.130.1.1.1.
       static std::string gssup_mech_der ();
 

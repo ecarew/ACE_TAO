@@ -1,5 +1,6 @@
 #include "orbsvcs/Log_Macros.h"
 #include "orbsvcs/SSLIOP/SSLIOP_GSSUP_Credentials.h"
+#include "orbsvcs/SSLIOP/SSLIOP_SAS.h"
 #include "orbsvcs/Security/Audit_Logger.h"
 #include "orbsvcs/SSLIOPC.h"
 
@@ -249,10 +250,11 @@ TAO::SSLIOP::GSSUP_CredentialsAcquirer::continue_acquisition (CORBA::Any const &
 std::string
 TAO::SSLIOP::GSSUP_CredentialsAcquirer::default_target (std::string const &username)
 {
-  size_t const at = username.rfind ('@');
-  if (at == std::string::npos || at + 1 >= username.size ())
+  std::string value;
+  std::string scope;
+  if (!TAO::SSLIOP::SAS_Target::split_scoped (username, value, scope))
     return std::string ();
-  return username.substr (at);
+  return scope;
 }
 
 bool
@@ -391,8 +393,11 @@ TAO::SSLIOP::GSSUP_CredentialsAcquirer::get_credentials (CORBA::Boolean on_list)
     target = default_target (username);
 
   std::string error;
-  if (username.empty () || !printable (username))
-    error = "bad username";
+  std::string user_value;
+  std::string user_scope;
+  if (username.empty () || !printable (username)
+      || !TAO::SSLIOP::SAS_Target::split_scoped (username, user_value, user_scope) || user_value.empty ())
+    error = "bad username (a scoped-username: user or user@realm, with @ and \\ quoted by \\)";
   else if (target.empty ())
     error = "no target name: give one, or a username of the form user@realm";
   else if (!printable (target))

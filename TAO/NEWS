@@ -128,8 +128,10 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
   ACCESS_GRANTED/DENIED carry asserter=) and in access-list rules, which
   can require it with via=ASSERTER. Refusals are ContextError 1
   (ASSERTION_REJECTED), or 2 for an unsupported token type or with no
-  asserter list. Anonymous assertion needs allow_anonymous_assertion = on
-  (self-check warns). "asserter *" (presumed trust) is refused. References
+  asserter list. allow_anonymous_assertion = on accepts an anonymous
+  assertion from any caller (CSIv2 rule 4); = listed only from listed
+  asserters allowed "anonymous"; the default is off (self-check warns on
+  either). "asserter *" (presumed trust) is refused. References
   advertise identity assertion in their SAS layer. New test
   orbsvcs/tests/Security/Assertion.
 
@@ -150,6 +152,12 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
   turn client authentication off. The SSLIOP connector now takes the
   first TLS credential of such a policy's list rather than only the
   first entry. New test orbsvcs/tests/Security/SAS_Client.
+
+. GSSUP usernames are CSIv2 scoped-usernames (CORBA 3.3 Part 2,
+  10.2.5.2) on both sides: a target accepts "alice" or "alice@lab.test"
+  (a scope other than its gssup_target is refused), with '@' and '\'
+  inside a name quoted by '\'. Asserted GSSUP names are parsed the same
+  way.
 
 . SSLIOP never negotiates below TLS 1.2: SSL 3.0, TLS 1.0 and TLS 1.1 are
   refused in every mode, whatever -SSLVersionList says (asking for them

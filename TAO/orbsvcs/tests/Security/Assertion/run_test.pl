@@ -113,8 +113,15 @@ spit ($asserters_anon, "version 0\nissued 2026-01-01T00:00:00Z\nasserter spiffe:
 $o = `$tool --conf $tconf asserters sign $sign --file $asserters_anon --bump 2>&1`;
 die "asserters sign failed:\n$o" unless $? == 0 && -s "$asserters_anon.sig";
 (my $anon = $base) =~ s/^csiv2_asserters = .*$/csiv2_asserters = $asserters_anon/m;
-spit ("$work/anon.conf", $anon . "allow_anonymous_assertion = on\n");
-chmod (0600, "$work/main.conf", "$work/deny.conf", "$work/anon.conf");
+spit ("$work/anon.conf", $anon . "allow_anonymous_assertion = listed\n");
+# Rule 4 (CORBA 3.3 Part 2, Table 10.4): any caller may assert anonymous,
+# with the usual asserter list (client2 is not on it) and with none at all.
+spit ("$work/anyanon.conf", $base . "allow_anonymous_assertion = on\n");
+(my $noasserters = $base) =~ s/^csiv2_asserters = .*\n//m;
+spit ("$work/anyanon_nolist.conf", $noasserters . "allow_anonymous_assertion = on\n");
+spit ("$work/badanon.conf", $base . "allow_anonymous_assertion = yes\n");
+chmod (0600, "$work/main.conf", "$work/deny.conf", "$work/anon.conf", "$work/anyanon.conf",
+       "$work/anyanon_nolist.conf", "$work/badanon.conf");
 
 sub svc {
     my ($name, $cert, $key) = @_;
@@ -211,14 +218,47 @@ stop_server ();
 
 # --- anonymous assertion allowed ------------------------------------------------------
 start_server ('anon');
-expect ('allow_anonymous_assertion warns in the self-check', slurp ($log), ['WARN csiv2_asserters: allow_anonymous_assertion = on']);
+expect ('allow_anonymous_assertion = listed warns in the self-check', slurp ($log), ['WARN csiv2_asserters: allow_anonymous_assertion = listed']);
 expect ('the reference then advertises ITTAnonymous too', scalar (`$iortool -k file://$d/alpha.ior 2>&1`),
         ['^      SAS supports=0x400 requires=0x0 identity_types=0xf$']);
 expect ('an asserted anonymous caller is accepted by SAS but is not an identified caller (access list refuses)',
         call ('client', 'anonymous'), [@ok, '^whoami EXCEPTION NO_PERMISSION$']);
 expect ('  (audited as anonymous, with its asserter)', slurp ($log),
         ['reason="ACCESS_DENIED" principal="anonymous" asserter="spiffe://ace-tao\.test/client"']);
+expect ('listed: an unlisted asserter (client2) may not assert anonymous', call ('client2', 'anonymous'), [@refused1]);
 stop_server ();
+
+# --- anonymous assertion from any caller (rule 4) -------------------------------------
+start_server ('anyanon');
+expect ('allow_anonymous_assertion = on warns in the self-check', slurp ($log),
+        ['WARN csiv2_asserters: allow_anonymous_assertion = on: any caller may assert an anonymous caller']);
+expect ('on: an unlisted asserter (client2) asserting anonymous is accepted by SAS (access list refuses)',
+        call ('client2', 'anonymous'), [@ok, '^whoami EXCEPTION NO_PERMISSION$']);
+expect ('  (audited as anonymous, with the real asserter)', slurp ($log),
+        ['reason="ACCESS_DENIED" principal="anonymous" asserter="spiffe://ace-tao\.test/client2"']);
+expect ('on: a name assertion from client2 is still refused (only anonymous is open)',
+        call ('client2', 'name:alice@lab.test'), [@refused1], ['^WHOAMI']);
+stop_server ();
+
+start_server ('anyanon_nolist');
+expect ('on without an asserter list: the reference advertises ITTAnonymous only', scalar (`$iortool -k file://$d/alpha.ior 2>&1`),
+        ['^      SAS supports=0x400 requires=0x0 identity_types=0x1$']);
+expect ('on without an asserter list: anonymous is accepted by SAS (access list refuses)',
+        call ('client2', 'anonymous'), [@ok, '^whoami EXCEPTION NO_PERMISSION$']);
+expect ('on without an asserter list: a name assertion is ContextError 2', call ('client', 'name:alice@lab.test'), [@refused2]);
+stop_server ();
+
+if ($prod) {
+    expect ('prod: allow_anonymous_assertion with an unknown value fails the self-check',
+            scalar (`ACE_TAO_SECURITY_CONF=$work/badanon.conf $sas/server -ORBSvcConf $work/server.svc -ORBListenEndpoints iiop://127.0.0.1: -d $work 2>&1`),
+            ['FAIL csiv2_asserters: allow_anonymous_assertion = yes: not off, listed or on', 'ORB_INIT REFUSED']);
+} else {
+    start_server ('badanon');
+    expect ('allow_anonymous_assertion with an unknown value is flagged by the self-check', slurp ($log),
+            ['WARN csiv2_asserters: allow_anonymous_assertion = yes: not off, listed or on']);
+    expect ('  (and anonymous assertion stays off)', call ('client', 'anonymous'), [@refused1]);
+    stop_server ();
+}
 
 # --- prod: a tampered asserter list stops the service -----------------------------------
 if ($prod) {

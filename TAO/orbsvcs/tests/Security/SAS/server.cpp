@@ -19,7 +19,7 @@
 
 namespace
 {
-  /// Test verifier: one user, a fixed password.
+  /// Test verifier: fixed users and passwords.
   class Test_Verifier : public TAO::Security::GSSUP_Verifier
   {
   public:
@@ -28,6 +28,9 @@ namespace
             std::string const &, std::string &detail) override
     {
       if (user == "alice" && password == "wonderland" && target == "@lab.test")
+        return ACCEPTED;
+      // A name with an '@' in it, sent quoted as "bob\@corp" (10.2.5.2).
+      if (user == "bob@corp" && password == "builder" && target == "@lab.test")
         return ACCEPTED;
       detail = user == "alice" ? "wrong password" : "unknown user";
       return REJECTED;

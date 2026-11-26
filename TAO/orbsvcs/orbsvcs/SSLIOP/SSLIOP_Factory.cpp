@@ -330,9 +330,16 @@ namespace
           else
             Self_Check::contribute ("csiv2_asserters", Self_Check::CHECK_OK, ("identity assertion from " + summary).c_str ());
         }
-      if (host.get ("allow_anonymous_assertion") == "on")
+      std::string const anon = host.get ("allow_anonymous_assertion");
+      if (anon == "on")
         Self_Check::contribute ("csiv2_asserters", Self_Check::CHECK_WARN,
-                                "allow_anonymous_assertion = on: listed asserters may assert anonymous callers");
+                                "allow_anonymous_assertion = on: any caller may assert an anonymous caller (CSIv2 rule 4)");
+      else if (anon == "listed")
+        Self_Check::contribute ("csiv2_asserters", Self_Check::CHECK_WARN,
+                                "allow_anonymous_assertion = listed: listed asserters may assert anonymous callers");
+      else if (!anon.empty () && anon != "off")
+        Self_Check::contribute ("csiv2_asserters", bad,
+                                ("allow_anonymous_assertion = " + anon + ": not off, listed or on").c_str ());
     }
 
     if (host.mode == TAO_Security_Mode::MODE_PROD)

@@ -111,15 +111,6 @@ namespace
     return false;
   }
 
-  /// The username scoped to the target: "alice" -> "alice@lab.example".
-  std::string
-  scoped (std::string const &user, std::string const &target)
-  {
-    if (user.find ('@') != std::string::npos || target.empty ())
-      return user;
-    return user + (target[0] == '@' ? target : "@" + target);
-  }
-
   void
   wipe (std::string &s)
   {
@@ -316,6 +307,16 @@ namespace
                    CSI::IdentityToken const &token,
                    SAS_Target::Config const &c)
   {
+    // CSIv2 rule 4 (CORBA 3.3 Part 2, Table 10.4): with
+    // allow_anonymous_assertion = on an anonymous assertion is accepted
+    // whoever makes it, authenticated or not.
+    if (token._d () == CSI::ITTAnonymous && c.anonymous == 2)
+      {
+        caller.asserter = !caller.authenticated.empty () ? caller.authenticated : caller.transport ();
+        caller.asserted = "anonymous";
+        return;
+      }
+
     if (!c.assertion)
       refuse (ri, caller, operation, id, 2, Reason::SAS_INVALID_MECH,
               "identity assertion is not supported here (no csiv2_asserters)");
@@ -351,7 +352,7 @@ namespace
     switch (type)
       {
       case CSI::ITTAnonymous:
-        if (!c.anonymous)
+        if (c.anonymous == 0)
           refuse (ri, caller, operation, id, 1, Reason::ASSERTION_REJECTED,
                   "anonymous assertion is off (allow_anonymous_assertion)");
         asserted = "anonymous";
@@ -371,17 +372,21 @@ namespace
           if (!ok)
             refuse (ri, caller, operation, id, 1, Reason::ASSERTION_REJECTED,
                     "the asserted name is not a well-formed GSSUP exported name");
-          size_t const at = name.rfind ('@');
-          if (at == std::string::npos)
+          std::string value;
+          std::string realm;
+          if (!SAS_Target::split_scoped (name, value, realm))
+            refuse (ri, caller, operation, id, 1, Reason::ASSERTION_REJECTED,
+                    "the asserted name is not a well-formed scoped-username");
+          if (value.empty ())
+            refuse (ri, caller, operation, id, 1, Reason::ASSERTION_REJECTED, "the asserted name has no user");
+          if (realm.empty ())
             {
               if (c.target.empty ())
                 refuse (ri, caller, operation, id, 1, Reason::ASSERTION_REJECTED,
                         "an unscoped name needs gssup_target");
-              name += c.target;
+              realm = c.target;
             }
-          else if (at == 0)
-            refuse (ri, caller, operation, id, 1, Reason::ASSERTION_REJECTED, "the asserted name has no user");
-          std::string const realm = name.substr (name.rfind ('@'));
+          name = SAS_Target::quote_scoped (value) + realm;
           bool const realm_ok = entry.realms.count ("*") != 0 || entry.realms.count (realm) != 0
                                 || (entry.realms.empty () && realm == c.target);
           if (!realm_ok)
@@ -434,11 +439,57 @@ SAS_Target::config ()
       r.target = "@" + r.target;
     r.audit_grants = h.get ("audit_grants") == "on";
     r.assertion = r.csiv2 != 0 && !h.get ("csiv2_asserters").empty ();
-    r.anonymous = h.get ("allow_anonymous_assertion") == "on";
+    std::string const anon = h.get ("allow_anonymous_assertion");
+    r.anonymous = r.csiv2 == 0 ? 0 : anon == "on" ? 2 : anon == "listed" ? 1 : 0;
     r.assert_caller = h.get ("csiv2_assert_caller") == "on";
     return r;
   } ();
   return c;
+}
+
+bool
+SAS_Target::split_scoped (std::string const &name, std::string &value, std::string &scope)
+{
+  value.clear ();
+  scope.clear ();
+  bool in_scope = false;
+  for (size_t i = 0; i < name.size (); ++i)
+    {
+      char ch = name[i];
+      if (ch == '\\')
+        {
+          if (i + 1 >= name.size () || (name[i + 1] != '@' && name[i + 1] != '\\'))
+            return false;
+          ch = name[++i];
+        }
+      else if (ch == '@')
+        {
+          if (in_scope)
+            return false;
+          in_scope = true;
+          scope = "@";
+          continue;
+        }
+      (in_scope ? scope : value) += ch;
+    }
+  // "name", "name@scope" or "@scope": no empty scope after an '@', and
+  // not an empty name on its own.
+  if (in_scope ? scope.size () < 2 : value.empty ())
+    return false;
+  return true;
+}
+
+std::string
+SAS_Target::quote_scoped (std::string const &part)
+{
+  std::string out;
+  for (char const ch : part)
+    {
+      if (ch == '@' || ch == '\\')
+        out += '\\';
+      out += ch;
+    }
+  return out;
 }
 
 std::string
@@ -661,11 +712,25 @@ SAS_Target::process (PortableInterceptor::ServerRequestInfo_ptr ri,
                   user, true);
         }
 
+      // The username is a scoped-username (10.2.4.1.1): "alice", or
+      // "alice@lab.test" scoped by this service's own target name.
+      std::string name;
+      std::string scope;
+      bool const well_formed = split_scoped (user, name, scope) && !name.empty ();
+      if (!well_formed || (!scope.empty () && scope != c.target))
+        {
+          wipe (password);
+          refuse (ri, caller, operation, id, 1, Reason::GSSUP_FAILED,
+                  well_formed ? "the username's scope is not this service's GSSUP target name"
+                              : "the username is not a well-formed scoped-username",
+                  user, true);
+        }
+
       using Verifier = TAO::Security::GSSUP_Verifier;
       Verifier *const v = Verifier::installed ();
       std::string detail;
       Verifier::Result const r =
-        v == nullptr ? Verifier::UNAVAILABLE : v->verify (user, password, c.target, caller.source, detail);
+        v == nullptr ? Verifier::UNAVAILABLE : v->verify (name, password, c.target, caller.source, detail);
       wipe (password);
       if (r != Verifier::ACCEPTED)
         {
@@ -677,7 +742,7 @@ SAS_Target::process (PortableInterceptor::ServerRequestInfo_ptr ri,
             detail = "no GSSUP verifier is installed";
           refuse (ri, caller, operation, id, 1, reason, detail.empty () ? "rejected" : detail.c_str (), user, true);
         }
-      caller.authenticated = scoped (user, c.target);
+      caller.authenticated = quote_scoped (name) + c.target;
     }
   else if (c.gssup == 2)
     {
