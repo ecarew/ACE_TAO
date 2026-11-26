@@ -1217,6 +1217,20 @@ TAO::SSLIOP::Protocol_Factory::init (int argc, ACE_TCHAR* argv[])
                       ACE_TEXT ("TAO (%P|%t) - Unable to apply -SSLEcName ")
                       ACE_TEXT ("due to lack of EC support in OpenSSL\n")));
       return -1;
+#elif OPENSSL_VERSION_NUMBER >= 0x10101000L
+      // The key-exchange groups the context may use: the named curve
+      // ("prime256v1", "P-384", "X25519", ...) or a colon-separated list.
+      // This replaces EC_KEY + SSL_CTX_set_tmp_ecdh, deprecated since
+      // OpenSSL 3.0, which limited the context to the one curve the same
+      // way.
+      if (1 != ::SSL_CTX_set1_groups_list (ssl_ctx->context (), ec_name.in ()))
+        {
+          ORBSVCS_ERROR ((LM_ERROR,
+                          ACE_TEXT ("TAO (%P|%t) - Unable to set Curve Name ")
+                          ACE_TEXT ("<%C> in SSLIOP factory.\n"),
+                          ec_name.in ()));
+          return -1;
+        }
 #else
       int const ec_nid = OBJ_sn2nid (ec_name.in ());
 
@@ -1239,7 +1253,10 @@ TAO::SSLIOP::Protocol_Factory::init (int argc, ACE_TCHAR* argv[])
           return -1;
         }
 
-      if (1 != ::SSL_CTX_set_tmp_ecdh (ssl_ctx->context (), ecdh))
+      // The context takes its own reference to the key.
+      int const set = ::SSL_CTX_set_tmp_ecdh (ssl_ctx->context (), ecdh);
+      ::EC_KEY_free (ecdh);
+      if (1 != set)
         {
           ORBSVCS_ERROR ((LM_ERROR,
                           ACE_TEXT ("TAO (%P|%t) - Unable to set temp ECDH ")

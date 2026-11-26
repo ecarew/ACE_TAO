@@ -14,17 +14,24 @@ TAO::SSLIOP::OpenSSL_traits< ::EVP_PKEY >::copy (::EVP_PKEY const & key)
 {
   ::EVP_PKEY * pkey = const_cast< ::EVP_PKEY *> (&key);
 
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+  // A deep copy of any key type (RSA, DSA, DH, EC, EdDSA, ...).
+  return ::EVP_PKEY_dup (pkey);
+#elif OPENSSL_VERSION_NUMBER >= 0x10100000L
+  // No EVP_PKEY_dup before OpenSSL 3: share the key instead.  TAO never
+  // modifies a key once loaded, so a reference serves as a copy, for
+  // every key type.
+  if (::EVP_PKEY_up_ref (pkey) != 1)
+    return nullptr;
+  return pkey;
+#else
   // We're using the EVP_PKEY_var even though it depends on this
   // trait function.  This works since we're not actually using
   // any of the EVP_PKEY_var methods that call this copy()
   // trait.  This allows us to maintain exception safety.
   TAO::SSLIOP::EVP_PKEY_var p = ::EVP_PKEY_new ();
 
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
   int const pkey_id = ::EVP_PKEY_type (pkey->type);
-#else
-  int const pkey_id = ::EVP_PKEY_id(pkey);
-#endif
   switch (pkey_id)
     {
     case EVP_PKEY_RSA:
@@ -32,8 +39,10 @@ TAO::SSLIOP::OpenSSL_traits< ::EVP_PKEY >::copy (::EVP_PKEY const & key)
         RSA * rsa = ::EVP_PKEY_get1_RSA (pkey);
         if (rsa != nullptr)
           {
-            // Not exception safe!
-            ::EVP_PKEY_set1_RSA (p.in (), RSAPrivateKey_dup (rsa));
+            // set1 takes its own reference: release the duplicate's.
+            RSA * dup = RSAPrivateKey_dup (rsa);
+            ::EVP_PKEY_set1_RSA (p.in (), dup);
+            ::RSA_free (dup);
             ::RSA_free (rsa);
           }
       }
@@ -69,6 +78,7 @@ TAO::SSLIOP::OpenSSL_traits< ::EVP_PKEY >::copy (::EVP_PKEY const & key)
     }
 
   return p._retn ();
+#endif /* OPENSSL_VERSION_NUMBER */
 }
 
 TAO_END_VERSIONED_NAMESPACE_DECL

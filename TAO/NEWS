@@ -154,6 +154,16 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
   first TLS credential of such a policy's list rather than only the
   first entry. New test orbsvcs/tests/Security/SAS_Client.
 
+. SSLIOP with OpenSSL 3: -SSLEcName sets the key-exchange groups with
+  SSL_CTX_set1_groups_list () (OpenSSL 1.1.1 and later) instead of the
+  deprecated EC_KEY and SSL_CTX_set_tmp_ecdh (), which also leaked the
+  EC_KEY; it still limits TLS to the named curve, and now takes a
+  colon-separated list (e.g. X25519:P-384). OpenSSL_traits<EVP_PKEY>::copy ()
+  duplicates any key type with EVP_PKEY_dup () (OpenSSL 3), or shares it
+  (OpenSSL 1.1); before, EC and EdDSA keys gave a null copy, a DSA copy lost
+  its private key and an RSA copy leaked. Two missing override specifiers
+  added (SSLIOP_Transport.h, SSLIOP_Profile.h).
+
 . Kerberos names in CSIv2 identity assertions (Phase 3 K5). Where
   csiv2_kerberos is on, references list the Kerberos mechanism among the
   supported naming mechanisms, and a listed asserter may assert a Kerberos
