@@ -1,7 +1,7 @@
 #include "orbsvcs/SSLIOP/SSLIOP_Kerberos.h"
 
 #include "ace/Guard_T.h"
-#include "ace/Thread_Mutex.h"
+#include "tao/orbconf.h"
 #include "ace/OS_NS_stdio.h"
 #include "ace/OS_NS_sys_stat.h"
 #include "ace/OS_NS_unistd.h"
@@ -91,14 +91,14 @@ namespace
 
   /// The acceptor credential, acquired once from the keytab.  The MIT
   /// library reads the keytab at each accept, so a rotated key is seen.
-  ACE_Thread_Mutex cred_lock;
+  TAO_SYNCH_MUTEX cred_lock;
   gss_cred_id_t acceptor_cred = GSS_C_NO_CREDENTIAL;
   std::string acceptor_key;
 
   gss_cred_id_t
   acceptor (std::string const &principal, std::string const &keytab, std::string const &rcache, std::string &why)
   {
-    ACE_GUARD_RETURN (ACE_Thread_Mutex, guard, cred_lock, GSS_C_NO_CREDENTIAL);
+    ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, guard, cred_lock, GSS_C_NO_CREDENTIAL);
     std::string const key = principal + '\n' + keytab + '\n' + rcache;
     if (acceptor_cred != GSS_C_NO_CREDENTIAL && key == acceptor_key)
       return acceptor_cred;
