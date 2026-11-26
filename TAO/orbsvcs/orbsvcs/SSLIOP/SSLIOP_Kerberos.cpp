@@ -135,6 +135,56 @@ namespace
     acceptor_key = key;
     return cred;
   }
+
+  /// A verified PAC's logon information into @a info; a PAC that does
+  /// not parse leaves the groups empty, with a note (no group is
+  /// granted from a buffer TAO cannot read).
+  void
+  parse_pac (std::string const &ndr, TAO::SSLIOP::Kerberos::Pac_Info &info)
+  {
+    std::string why;
+    if (!TAO::SSLIOP::Kerberos::parse_logon_info (ndr, info, why))
+      {
+        info.groups.clear ();
+        info.note = "unreadable PAC logon information (" + why + "); its groups are ignored";
+      }
+  }
+
+  /// The PAC logon information of the accepted client @a src (MIT
+  /// exposes PAC buffers as "urn:mspac:" name attributes).  Its groups
+  /// are used only when the library verified the PAC with the ticket.
+  void
+  read_pac (gss_name_t src, TAO::SSLIOP::Kerberos::Pac_Info &info)
+  {
+    static char const attr[] = "urn:mspac:logon-info";
+    gss_buffer_desc a = { sizeof attr - 1, const_cast<char *> (attr) };
+    int authenticated = 0;
+    int complete = 0;
+    int more = -1;
+    gss_buffer_desc value = GSS_C_EMPTY_BUFFER;
+    gss_buffer_desc display = GSS_C_EMPTY_BUFFER;
+    OM_uint32 minor = 0;
+    OM_uint32 const major =
+      ::gss_get_name_attribute (&minor, src, &a, &authenticated, &complete, &value, &display, &more);
+    if (GSS_ERROR (major) || value.length == 0)
+      {
+        info.note = "the ticket carries no PAC logon information";
+      }
+    else
+      {
+        info.present = true;
+        info.verified = authenticated != 0;
+        if (!info.verified)
+          info.note = "the PAC did not verify with the ticket; its groups are ignored";
+        else
+          parse_pac (std::string (static_cast<char const *> (value.value), value.length), info);
+      }
+    OM_uint32 m2 = 0;
+    if (value.length > 0)
+      ::gss_release_buffer (&m2, &value);
+    if (display.length > 0)
+      ::gss_release_buffer (&m2, &display);
+  }
 #endif /* TAO_HAS_GSSAPI */
 }
 
@@ -376,7 +426,8 @@ TAO::SSLIOP::Kerberos::accept (std::string const &token,
                                bool require_binding,
                                std::string &client,
                                std::string &reply,
-                               std::string &why)
+                               std::string &why,
+                               Pac_Info *pac)
 {
 #if defined (TAO_HAS_GSSAPI)
   gss_cred_id_t const cred = acceptor (principal, keytab, rcache, why);
@@ -414,6 +465,8 @@ TAO::SSLIOP::Kerberos::accept (std::string const &token,
           why = (flags & GSS_C_CHANNEL_BOUND_FLAG) != 0 ? "bound to the TLS session" : "not channel bound";
           result = ACCEPTED;
           ::gss_release_buffer (&m2, &name);
+          if (pac != nullptr)
+            read_pac (src, *pac);
         }
     }
   else if (major == GSS_S_CONTINUE_NEEDED)
@@ -448,6 +501,7 @@ TAO::SSLIOP::Kerberos::accept (std::string const &token,
   ACE_UNUSED_ARG (require_binding);
   ACE_UNUSED_ARG (client);
   ACE_UNUSED_ARG (reply);
+  ACE_UNUSED_ARG (pac);
   why = "SSLIOP was built without GSS-API (MPC feature gssapi)";
   return UNAVAILABLE;
 #endif /* TAO_HAS_GSSAPI */
@@ -489,6 +543,257 @@ TAO::SSLIOP::Kerberos::initiate (std::string const &principal,
   why = "SSLIOP was built without GSS-API (MPC feature gssapi)";
   return false;
 #endif /* TAO_HAS_GSSAPI */
+}
+
+namespace
+{
+  /// A bounds-checked little-endian NDR (MS-RPCE 2.2.5) reader.
+  class Ndr_Reader
+  {
+  public:
+    explicit Ndr_Reader (std::string const &b) : b_ (b) {}
+    bool ok () const { return ok_; }
+    size_t pos () const { return pos_; }
+    void
+    align (size_t n)
+    {
+      size_t const p = (pos_ + n - 1) / n * n;
+      if (p > b_.size ())
+        ok_ = false;
+      else
+        pos_ = p;
+    }
+    void
+    skip (size_t n)
+    {
+      if (!ok_ || n > b_.size () - pos_)
+        ok_ = false;
+      else
+        pos_ += n;
+    }
+    unsigned
+    u8 ()
+    {
+      if (!ok_ || pos_ >= b_.size ())
+        {
+          ok_ = false;
+          return 0;
+        }
+      return static_cast<unsigned char> (b_[pos_++]);
+    }
+    unsigned long
+    u16 ()
+    {
+      unsigned long const lo = u8 ();
+      return lo | (static_cast<unsigned long> (u8 ()) << 8);
+    }
+    unsigned long
+    u32 ()
+    {
+      unsigned long const lo = u16 ();
+      return lo | (u16 () << 16);
+    }
+    void fail () { ok_ = false; }
+
+  private:
+    std::string const &b_;
+    size_t pos_ = 0;
+    bool ok_ = true;
+  };
+
+  constexpr unsigned long MAX_PAC_GROUPS = 4096;
+  /// SE_GROUP_USE_FOR_DENY_ONLY: a SID that may only deny, never grant.
+  constexpr unsigned long SE_GROUP_USE_FOR_DENY_ONLY = 0x10;
+
+  /// A deferred RPC_UNICODE_STRING body (conformant varying array of
+  /// UTF-16), returned as ASCII with '?' for anything else.
+  std::string
+  ndr_string (Ndr_Reader &r)
+  {
+    r.align (4);
+    unsigned long const max = r.u32 ();
+    unsigned long const offset = r.u32 ();
+    unsigned long const actual = r.u32 ();
+    if (!r.ok () || offset != 0 || actual > max || actual > 1024)
+      {
+        r.fail ();
+        return std::string ();
+      }
+    std::string out;
+    for (unsigned long i = 0; i < actual && r.ok (); ++i)
+      {
+        unsigned long const c = r.u16 ();
+        out += (c >= 0x20 && c < 0x7F) ? static_cast<char> (c) : '?';
+      }
+    return out;
+  }
+
+  /// A deferred RPC_SID (conformant on its sub-authorities), as text.
+  std::string
+  ndr_sid (Ndr_Reader &r)
+  {
+    r.align (4);
+    unsigned long const max = r.u32 ();
+    unsigned const revision = r.u8 ();
+    unsigned const count = r.u8 ();
+    if (!r.ok () || revision != 1 || count != max || count > 15)
+      {
+        r.fail ();
+        return std::string ();
+      }
+    unsigned long long authority = 0;
+    for (int i = 0; i < 6; ++i)
+      authority = (authority << 8) | r.u8 ();
+    std::string out = "S-1-";
+    if (authority < (1ULL << 32))
+      out += std::to_string (authority);
+    else
+      {
+        char hex[20];
+        ACE_OS::snprintf (hex, sizeof hex, "0x%012llX", authority);
+        out += hex;
+      }
+    for (unsigned i = 0; i < count && r.ok (); ++i)
+      out += "-" + std::to_string (r.u32 ());
+    return r.ok () ? out : std::string ();
+  }
+
+  /// A deferred array of GROUP_MEMBERSHIP (RelativeId, Attributes).
+  void
+  ndr_groups (Ndr_Reader &r, unsigned long count, std::vector<std::pair<unsigned long, unsigned long>> &out)
+  {
+    r.align (4);
+    if (r.u32 () != count || count > MAX_PAC_GROUPS)
+      {
+        r.fail ();
+        return;
+      }
+    for (unsigned long i = 0; i < count && r.ok (); ++i)
+      {
+        unsigned long const rid = r.u32 ();
+        unsigned long const attributes = r.u32 ();
+        out.emplace_back (rid, attributes);
+      }
+  }
+}
+
+bool
+TAO::SSLIOP::Kerberos::parse_logon_info (std::string const &ndr, Pac_Info &info, std::string &why)
+{
+  Ndr_Reader r (ndr);
+  // MS-RPCE 2.2.6 type serialisation version 1: common header (version
+  // 1, little-endian, length 8, filler), private header (object length,
+  // filler), then the top-level pointer to KERB_VALIDATION_INFO.
+  if (ndr.size () < 20 || r.u8 () != 1 || r.u8 () != 0x10 || r.u16 () != 8)
+    {
+      why = "not a little-endian NDR type serialisation (version 1)";
+      return false;
+    }
+  r.skip (4);
+  unsigned long const length = r.u32 ();
+  r.skip (4);
+  if (!r.ok () || length > ndr.size () - 16 || r.u32 () == 0)
+    {
+      why = "bad NDR serialisation header";
+      return false;
+    }
+
+  // KERB_VALIDATION_INFO, fixed part.
+  r.skip (6 * 8);                       // six FILETIMEs
+  bool strings[6];
+  for (bool &s : strings)               // EffectiveName .. HomeDirectoryDrive
+    {
+      r.skip (4);
+      s = r.u32 () != 0;
+    }
+  r.skip (4);                           // LogonCount, BadPasswordCount
+  unsigned long const user_id = r.u32 ();
+  r.skip (4);                           // PrimaryGroupId (also in GroupIds)
+  unsigned long const group_count = r.u32 ();
+  bool const group_ids = r.u32 () != 0;
+  r.skip (4 + 16);                      // UserFlags, UserSessionKey
+  r.skip (4);
+  bool const logon_server = r.u32 () != 0;
+  r.skip (4);
+  bool const logon_domain = r.u32 () != 0;
+  bool const domain_id = r.u32 () != 0;
+  r.skip (8 + 4 + 4 + 8 + 8 + 4 + 4);   // Reserved1 .. Reserved3
+  unsigned long const sid_count = r.u32 ();
+  bool const extra_sids = r.u32 () != 0;
+  bool const resource_domain = r.u32 () != 0;
+  unsigned long const resource_count = r.u32 ();
+  bool const resource_ids = r.u32 () != 0;
+  if (!r.ok () || group_count > MAX_PAC_GROUPS || sid_count > MAX_PAC_GROUPS || resource_count > MAX_PAC_GROUPS)
+    {
+      why = !r.ok () ? "the PAC logon information is truncated" : "the PAC names more than 4096 groups";
+      return false;
+    }
+
+  // Deferred pointees, in field order.
+  for (bool s : strings)
+    if (s)
+      (void) ndr_string (r);
+  std::vector<std::pair<unsigned long, unsigned long>> groups;
+  if (group_ids)
+    ndr_groups (r, group_count, groups);
+  if (logon_server)
+    (void) ndr_string (r);
+  std::string domain;
+  if (logon_domain)
+    domain = ndr_string (r);
+  std::string domain_sid;
+  if (domain_id)
+    domain_sid = ndr_sid (r);
+  std::vector<std::pair<std::string, unsigned long>> extras;
+  if (extra_sids)
+    {
+      r.align (4);
+      if (r.u32 () != sid_count)
+        r.fail ();
+      std::vector<std::pair<bool, unsigned long>> slots;
+      for (unsigned long i = 0; i < sid_count && r.ok (); ++i)
+        {
+          bool const p = r.u32 () != 0;
+          slots.emplace_back (p, r.u32 ());
+        }
+      for (auto const &s : slots)
+        if (s.first && r.ok ())
+          extras.emplace_back (ndr_sid (r), s.second);
+    }
+  std::string resource_sid;
+  if (resource_domain)
+    resource_sid = ndr_sid (r);
+  std::vector<std::pair<unsigned long, unsigned long>> resources;
+  if (resource_ids)
+    ndr_groups (r, resource_count, resources);
+  if (!r.ok ())
+    {
+      why = "the PAC logon information is malformed";
+      return false;
+    }
+  if (domain_sid.empty ())
+    {
+      why = "the PAC logon information has no domain SID";
+      return false;
+    }
+
+  info.domain = domain;
+  info.domain_sid = domain_sid;
+  info.user_sid = domain_sid + "-" + std::to_string (user_id);
+  info.groups.clear ();
+  std::set<std::string> seen;
+  auto add = [&info, &seen] (std::string const &sid, unsigned long attributes) {
+    if (!sid.empty () && (attributes & SE_GROUP_USE_FOR_DENY_ONLY) == 0 && seen.insert (sid).second)
+      info.groups.push_back (sid);
+  };
+  for (auto const &g : groups)
+    add (domain_sid + "-" + std::to_string (g.first), g.second);
+  for (auto const &e : extras)
+    add (e.first, e.second);
+  if (!resource_sid.empty ())
+    for (auto const &g : resources)
+      add (resource_sid + "-" + std::to_string (g.first), g.second);
+  return true;
 }
 
 std::string

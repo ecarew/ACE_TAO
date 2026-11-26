@@ -157,6 +157,16 @@ namespace
           for (CORBA::ULong i = 0; i < simple->alternate_names ().length (); ++i)
             s += " alt=" + describe (simple->alternate_names ()[i]);
         }
+      // Privileges, e.g. AD group SIDs from a Kerberos ticket (K4):
+      // " priv=AUTHORITY_TYPE:AUTHORITY/TYPE=VALUE".
+      SecurityLevel3::ScopedPrivilegesList const &sp = p->with_privileges ();
+      for (CORBA::ULong i = 0; i < sp.length (); ++i)
+        {
+          std::string const authority = describe (sp[i].privilege_authority);
+          for (CORBA::ULong j = 0; j < sp[i].privileges.length (); ++j)
+            s += " priv=" + authority + "/" + sp[i].privileges[j].the_type.in () + "="
+                 + narrow (sp[i].privileges[j].the_value.in ());
+        }
       return CORBA::string_dup (s.c_str ());
     }
 

@@ -39,6 +39,7 @@
 #include "tao/Versioned_Namespace.h"
 
 #include <string>
+#include <vector>
 
 struct x509_st;
 
@@ -95,6 +96,38 @@ namespace TAO
                                            std::string &summary,
                                            std::string &error);
 
+      /**
+       * What an Active Directory ticket says about its client (Phase 3
+       * K4, R30): the logon information of its PAC (MS-PAC 2.5,
+       * KERB_VALIDATION_INFO).
+       */
+      struct Pac_Info
+      {
+        /// A PAC logon-info buffer was in the ticket.
+        bool present = false;
+        /// It verified with the ticket (the library's "authenticated").
+        bool verified = false;
+        /// The client's SID (S-1-5-21-...-RID).
+        std::string user_sid;
+        /// The logon domain's NetBIOS name and SID.
+        std::string domain;
+        std::string domain_sid;
+        /// Group SIDs: the domain groups, extra SIDs and resource groups,
+        /// without deny-only ones, in ticket order, no duplicates.
+        std::vector<std::string> groups;
+        /// Why the PAC's groups are not used, if they are not.
+        std::string note;
+      };
+
+      /**
+       * Parses an NDR-serialised KERB_VALIDATION_INFO (the PAC's
+       * logon-info buffer, MS-PAC 2.5 and 2.4 of MS-RPCE type
+       * serialisation).  Fills @a info's SIDs; false with @a why if the
+       * buffer is malformed or names more than 4096 groups.  Needs no
+       * GSS-API.
+       */
+      TAO_SSLIOP_Export bool parse_logon_info (std::string const &ndr, Pac_Info &info, std::string &why);
+
       /// Outcome of accept().
       enum Accept_Status
       {
@@ -111,6 +144,8 @@ namespace TAO
        * token not bound to it is refused.  On success @a client is the
        * caller (user@REALM) and @a reply the token to return, if any (the
        * Kerberos AP-REP, when the client asked for mutual authentication).
+       * If @a pac is not null it gets the ticket's PAC logon information;
+       * its groups are filled only when the PAC verified with the ticket.
        */
       TAO_SSLIOP_Export Accept_Status accept (std::string const &token,
                                               std::string const &binding,
@@ -120,7 +155,8 @@ namespace TAO
                                               bool require_binding,
                                               std::string &client,
                                               std::string &reply,
-                                              std::string &why);
+                                              std::string &why,
+                                              Pac_Info *pac = nullptr);
 
       /**
        * Makes a Kerberos initial context token for service @a principal

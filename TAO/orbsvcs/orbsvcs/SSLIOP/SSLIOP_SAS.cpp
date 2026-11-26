@@ -703,6 +703,7 @@ SAS_Target::process (PortableInterceptor::ServerRequestInfo_ptr ri,
 
   std::string final_token;
   char const *mech_name = "";
+  TAO::SSLIOP::Kerberos::Pac_Info pac;
   std::string const auth_mech =
     ec.client_authentication_token.length () > 0 ? token_mech (octets (ec.client_authentication_token)) : std::string ();
 
@@ -720,10 +721,17 @@ SAS_Target::process (PortableInterceptor::ServerRequestInfo_ptr ri,
       std::string reply;
       std::string why;
       TAO::SSLIOP::Kerberos::Accept_Status const st = TAO::SSLIOP::Kerberos::accept (
-        token, binding, c.krb_principal, c.krb_keytab, c.krb_rcache, c.krb_binding == 2, client, reply, why);
+        token, binding, c.krb_principal, c.krb_keytab, c.krb_rcache, c.krb_binding == 2, client, reply, why, &pac);
       if (st != TAO::SSLIOP::Kerberos::ACCEPTED)
         refuse (ri, caller, operation, id, 1, Reason::KRB_FAILED, why.c_str ());
       caller.authenticated = client;
+      // R30: AD groups from the ticket's PAC, trusted only once it
+      // verified with the ticket; no directory is asked.
+      if (pac.verified && !pac.groups.empty ())
+        {
+          caller.groups = pac.groups;
+          caller.groups_authority = TAO::SSLIOP::Kerberos::realm_of (client);
+        }
       final_token = reply;
       mech_name = "krb5";
     }
@@ -819,14 +827,29 @@ SAS_Target::process (PortableInterceptor::ServerRequestInfo_ptr ri,
   add_reply (ri, reply);
 
   if (c.audit_grants)
-    TAO::Security::Audit_Logger::instance ()->write (
-      TAO::Security::Audit_Record ("authn", true, Reason::SAS_ACCEPTED)
-        .field ("principal", caller.effective ())
+    {
+      TAO::Security::Audit_Record rec ("authn", true, Reason::SAS_ACCEPTED);
+      rec.field ("principal", caller.effective ())
         .field ("transport_principal", caller.transport ())
         .field ("asserter", caller.asserter)
         .field ("src", caller.source)
         .field ("op", operation == nullptr ? "" : operation)
-        .field ("mech", mech_name));
+        .field ("mech", mech_name);
+      if (pac.present)
+        {
+          // Ticket groups (K4): the first 64, then how many more.
+          std::string list;
+          size_t const shown = pac.groups.size () < 64 ? pac.groups.size () : 64;
+          for (size_t i = 0; i < shown; ++i)
+            list += (i == 0 ? "" : ",") + pac.groups[i];
+          if (pac.groups.size () > shown)
+            list += ",+" + std::to_string (pac.groups.size () - shown) + " more";
+          rec.field ("user_sid", pac.user_sid).field ("groups", list);
+          if (!pac.note.empty ())
+            rec.text (pac.note.c_str ());
+        }
+      TAO::Security::Audit_Logger::instance ()->write (rec);
+    }
   return ACCEPTED;
 }
 

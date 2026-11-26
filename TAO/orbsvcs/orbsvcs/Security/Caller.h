@@ -53,6 +53,14 @@ namespace TAO
     /// SecurityLevel3 name type of a SPIFFE ID (a URI SAN).
     constexpr char const NT_SPIFFE_ID[] = "TAO:SPIFFEID";
 
+    /// SecurityLevel3 name type of a Kerberos realm: the authority of
+    /// ticket groups (Phase 3 K4).
+    constexpr char const NT_KERBEROS_REALM[] = "TAO:KerberosRealm";
+
+    /// SecurityLevel3 privilege attribute type of an AD group SID from a
+    /// verified Kerberos ticket (Phase 3 K4).
+    constexpr char const PA_GROUP_SID[] = "TAO:ADGroupSID";
+
     struct TAO_Security_Export Caller
     {
       /// @name Transport principal, from the peer certificate
@@ -69,6 +77,13 @@ namespace TAO
       /// Asserted principal and the principal that asserted it.
       std::string asserted;
       std::string asserter;
+
+      /// Group SIDs from the authenticated principal's verified Kerberos
+      /// ticket (its AD PAC, Phase 3 K4), and the realm that issued them.
+      /// They belong to @c authenticated: when a name is asserted they
+      /// are the asserter's groups, never the asserted caller's.
+      std::vector<std::string> groups;
+      std::string groups_authority;
 
       /// The peer's address, "host:port".
       std::string source;

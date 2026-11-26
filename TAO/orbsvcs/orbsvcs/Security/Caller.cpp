@@ -306,12 +306,31 @@ TAO::Security::principal_of (Caller const &caller)
   for (size_t i = 1; i < names.size (); ++i)
     alternates[static_cast<CORBA::ULong> (i - 1)] = name_of (names[i]);
 
+  // Ticket groups (K4) as privileges issued by the Kerberos realm, only
+  // for the principal whose ticket carried them: never for an asserted
+  // caller, whose groups the asserter's ticket does not speak for.
+  SecurityLevel3::ScopedPrivilegesList privileges;
+  if (!caller.groups.empty () && caller.asserted.empty () && !caller.authenticated.empty ())
+    {
+      privileges.length (1);
+      SecurityLevel3::ScopedPrivileges &sp = privileges[0];
+      sp.privilege_authority.the_type = TAO::Security::NT_KERBEROS_REALM;
+      sp.privilege_authority.the_name.length (1);
+      sp.privilege_authority.the_name[0] = widen (caller.groups_authority);
+      sp.privileges.length (static_cast<CORBA::ULong> (caller.groups.size ()));
+      for (CORBA::ULong i = 0; i < sp.privileges.length (); ++i)
+        {
+          sp.privileges[i].the_type = TAO::Security::PA_GROUP_SID;
+          sp.privileges[i].the_value = widen (caller.groups[i]);
+        }
+    }
+
   OBV_SecurityLevel3::SimplePrincipal *p = nullptr;
   ACE_NEW_THROW_EX (p,
                     OBV_SecurityLevel3::SimplePrincipal (SecurityLevel3::PT_Simple,
                                                          name_of (caller.effective ()),
                                                          SecurityLevel3::PrinAttributeList (),
-                                                         SecurityLevel3::ScopedPrivilegesList (),
+                                                         privileges,
                                                          caller.effective () != "anonymous",
                                                          alternates),
                     CORBA::NO_MEMORY ());

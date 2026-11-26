@@ -67,6 +67,41 @@ if ($built) {
             ['^offered=0 SSLIOP was built without GSS-API', '^status_text=GSS-API not built$']);
 }
 
+# --- K4: PAC logon information, canned (no KDC needed) -----------------------------
+# pac_samba_logon_info.hex is the logon-info buffer of a real AD ticket
+# from the lab's Samba domain: user dana (RID 1102) in Domain Users (513)
+# and ns-admins (1103), plus two extra SIDs.  Variants patch it.
+{
+    my $pacdir = "$dir/pac_work";
+    rmtree ($pacdir);
+    mkdir $pacdir;
+    my $raw = pack ('H*', join ('', slurp ("$dir/pac_samba_logon_info.hex") =~ /([0-9a-f]+)/g));
+    my $dom = 'S-1-5-21-1705173496-149076901-855181407';
+    sub pac_probe {
+        my ($pacdir, $name, $bytes) = @_;
+        spit ("$pacdir/$name.hex", unpack ('H*', $bytes));
+        return scalar (`$dir/krb_probe -pac $pacdir/$name.hex 2>&1`);
+    }
+    sub patched { my ($b, $off, $v) = @_; substr ($b, $off, 4) = pack ('V', $v); return $b; }
+    $out = pac_probe ($pacdir, 'real', $raw);
+    expect ('K4: a real AD PAC (Samba) parses: user SID, domain and every group', $out,
+            ["^PAC OK user_sid=$dom-1102 domain=ADLAB\$", "^GROUP $dom-513\$", "^GROUP $dom-1103\$", '^GROUP S-1-18-1$']);
+    $out = pac_probe ($pacdir, 'denyonly', patched ($raw, 0x14c, 0x17));
+    expect ('K4: a deny-only group (SE_GROUP_USE_FOR_DENY_ONLY) grants nothing and is left out', $out,
+            ["^PAC OK ", "^GROUP $dom-513\$"], ["^GROUP $dom-1103\$"]);
+    expect ('K4: a PAC naming more than 4096 groups is refused', pac_probe ($pacdir, 'huge', patched ($raw, 0x80, 0x10000)),
+            ['^PAC REFUSED the PAC names more than 4096 groups$']);
+    expect ('K4: a group count that disagrees with its array is refused', pac_probe ($pacdir, 'count', patched ($raw, 0x80, 3)),
+            ['^PAC REFUSED the PAC logon information is malformed$']);
+    expect ('K4: a PAC shorter than its header says is refused', pac_probe ($pacdir, 'short', substr ($raw, 0, 300)),
+            ['^PAC REFUSED bad NDR serialisation header$']);
+    expect ('K4: a truncated PAC whose header agrees is refused', pac_probe ($pacdir, 'cut', patched (substr ($raw, 0, 300), 8, 284)),
+            ['^PAC REFUSED the PAC logon information is (malformed|truncated)$']);
+    expect ('K4: a buffer that is not NDR is refused', pac_probe ($pacdir, 'notndr', "\x02" . substr ($raw, 1)),
+            ['^PAC REFUSED not a little-endian NDR type serialisation']);
+    rmtree ($pacdir) if $status == 0;
+}
+
 # --- K2: needs the lab KDC ----------------------------------------------------------
 my $lab = $ENV{'ACE_TAO_KRB_LAB'} || "$ENV{HOME}/Projects/claude/CORBA/lab/state/kdc";
 my $krb = $ENV{'KRB5_BIN'} || (-x '/opt/homebrew/opt/krb5/bin/kinit' ? '/opt/homebrew/opt/krb5/bin' : '/usr/bin');
@@ -338,6 +373,59 @@ expect ('K3: required, no Kerberos credentials: refused locally, without a login
          'reason="SAS_CLIENT_NO_CREDENTIALS" .*mech="kerberos"\] the target requires Kerberos and there are no Kerberos credentials'],
         ['^SAS REPLY (complete|error)', '^WHOAMI']);
 stop_server ();
+
+# --- K4: AD group SIDs from real tickets (the lab AD domain, Samba) -------------------
+my $adlab = $ENV{'ACE_TAO_AD_LAB'} || "$ENV{HOME}/Projects/claude/CORBA/lab/state/addc";
+my $addc = "$adlab/../../addc.sh";
+my $adskip = !-f "$adlab/keytabs/who.keytab" || !-f "$adlab/passwords/dana" || !-f "$adlab/ns-admins.sid"
+           ? "no lab AD domain at $adlab (CORBA lab/addc.sh up)" : '';
+my $adenv = "KRB5_CONFIG=$adlab/krb5.conf";
+sub kinit_ad { my ($user) = @_; return scalar (`$adenv KRB5CCNAME=FILE:$work/ad_$user $krb/kinit $user\@AD.LAB.TEST < $adlab/passwords/$user 2>&1`); }
+if ($adskip eq '') {
+    my $k = kinit_ad ('dana');
+    $adskip = "kinit at the lab AD domain failed (is it up? CORBA lab/addc.sh up): $k" if $? != 0;
+}
+if ($adskip ne '') {
+    print "SKIPPED: AD lab checks ($adskip)\n";
+} else {
+    (my $nsadmins = slurp ("$adlab/ns-admins.sid")) =~ s/\s+//g;
+    (my $danasid = slurp ("$adlab/dana.sid")) =~ s/\s+//g;
+    copy ("$adlab/keytabs/who.keytab", "$work/ad.keytab") || die "copy keytab: $!";
+    chmod (0600, "$work/ad.keytab");
+    (my $adconf = $base) =~ s/^krb_principal = .*$/krb_principal = ace-tao\/who.ad.lab.test\@AD.LAB.TEST/m;
+    spit ("$work/ad.conf", $adconf . "csiv2_kerberos = supported\nkrb_keytab = $work/ad.keytab\n");
+    chmod (0600, "$work/ad.conf");
+    my $ns = "priv=TAO:KerberosRealm:AD\\.LAB\\.TEST/TAO:ADGroupSID=\Q$nsadmins\E( |\$)";
+    my $users = 'priv=TAO:KerberosRealm:AD\.LAB\.TEST/TAO:ADGroupSID=S-1-5-21-[0-9-]+-513( |$)';
+
+    start_server ('ad');
+    $out = tao ('beta', '-K target=', "$adenv KRB5CCNAME=FILE:$work/ad_dana");
+    expect ('K4: an AD ticket is served, with the user\'s groups from its PAC as privileges', $out,
+            ['^ACQUIRE OK$', '^WHOAMI name=\S+dana\@AD\.LAB\.TEST authenticated=yes', $ns, $users]);
+    expect ('  (server audit: the user SID and the ticket groups)', log_now (),
+            ["reason=\"SAS_ACCEPTED\" principal=\"dana\\\@AD\\.LAB\\.TEST\".* mech=\"krb5\" user_sid=\"\Q$danasid\E\" groups=\"[^\"]*\Q$nsadmins\E"]);
+    kinit_ad ('erin');
+    $out = tao ('beta', '-K target=', "$adenv KRB5CCNAME=FILE:$work/ad_erin");
+    expect ('K4: a user outside ns-admins gets only her own groups', $out,
+            ['^WHOAMI name=\S+erin\@AD\.LAB\.TEST authenticated=yes', $users], [$ns]);
+
+    # Revocation at the next ticket (D3.10): out of the group, a new ticket
+    # no longer carries it.  The lab is put back as it was afterwards.
+    # Needs the lab script and Docker (not inside the Linux lab container).
+    if (-f $addc && `command -v docker 2>/dev/null` ne '') {
+        `bash $addc member remove ns-admins dana 2>&1`;
+        kinit_ad ('dana');
+        $out = tao ('beta', '-K target=', "$adenv KRB5CCNAME=FILE:$work/ad_dana");
+        expect ('K4: removed from ns-admins, the user\'s next ticket no longer carries it', $out,
+                ['^WHOAMI name=\S+dana\@AD\.LAB\.TEST authenticated=yes', $users], [$ns]);
+        `bash $addc member add ns-admins dana 2>&1`;
+    } else {
+        print "SKIPPED: group removal check (needs CORBA lab/addc.sh and docker)\n";
+    }
+    stop_server ('none');
+    expect ('K4: an MIT ticket (no PAC logon information) carries no groups', slurp ("$work/krb_k3/server.log"),
+            ['reason="SAS_ACCEPTED" principal="alice\@LAB\.TEST"'], ['principal="alice\@LAB\.TEST"[^\n]*groups=']);
+}
 
 # --- the keytab self-check -----------------------------------------------------------------
 my $sc = scalar (`ACE_TAO_SECURITY_CONF=$work/open.conf $sas/server -ORBSvcConf $work/server.svc -ORBListenEndpoints iiop://127.0.0.1: -d $work 2>&1 & sleep 3; kill \$! 2>/dev/null`);

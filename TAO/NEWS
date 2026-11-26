@@ -154,6 +154,19 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
   first TLS credential of such a policy's list rather than only the
   first entry. New test orbsvcs/tests/Security/SAS_Client.
 
+. AD group SIDs from Kerberos tickets (Phase 3 K4). When an accepted ticket
+  carries an Active Directory PAC that the GSS-API library verified with
+  the ticket, its logon information (MS-PAC KERB_VALIDATION_INFO) gives
+  the user SID and group SIDs: domain groups, extra SIDs and resource
+  groups, without deny-only ones; no directory is asked. They go on the
+  caller (TAO::Security::Caller::groups, for the authenticated principal
+  only, never an asserted one), into SAS_ACCEPTED audit records (user_sid,
+  groups) and into the SecurityLevel3 principal as privileges (authority
+  TAO:KerberosRealm, type TAO:ADGroupSID). An unverified or unreadable PAC
+  grants no group. The NDR parser, TAO::SSLIOP::Kerberos::
+  parse_logon_info (), is bounds-checked, caps lists at 4096 groups and
+  needs no GSS-API; the Kerberos test checks it against a real AD PAC.
+
 . CSIv2 Kerberos logins from TAO clients (Phase 3 K3; needs the gssapi
   build). The new SecurityLevel3 acquisition method "SL3Kerberos" takes an
   SSLIOP::KerberosAuthData: a ticket cache (default KRB5CCNAME, as left by
