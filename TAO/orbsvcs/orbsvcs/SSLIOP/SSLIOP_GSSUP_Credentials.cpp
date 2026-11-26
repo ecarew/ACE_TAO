@@ -335,7 +335,8 @@ TAO::SSLIOP::GSSUP_CredentialsAcquirer::read_password (std::string const &source
           return false;
         }
       ACE_stat st;
-      if (ACE_OS::fstat (fd, &st) != 0 || !S_ISREG (st.st_mode))
+      // S_ISREG is POSIX only; S_IFMT and S_IFREG exist on Windows too.
+      if (ACE_OS::fstat (fd, &st) != 0 || (st.st_mode & S_IFMT) != S_IFREG)
         {
           ACE_OS::close (fd);
           error = path + " is not a regular file";
