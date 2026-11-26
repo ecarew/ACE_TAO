@@ -1,0 +1,23 @@
+// -*- MPC -*-
+// GSS-API with the Kerberos V5 mechanism (MIT krb5), for CSIv2 Kerberos
+// logins in SSLIOP (Phase 3).  Off by default: set gssapi=1 in
+// default.features, and GSSAPI_ROOT (or GSSAPI_INCDIR and GSSAPI_LIBDIR)
+// where the library is not in the system paths, for example
+//   GSSAPI_ROOT = /opt/homebrew/opt/krb5    (Homebrew, macOS)
+// Debian and Ubuntu need the libkrb5-dev package.  Windows (SSPI) is not
+// supported yet.
+feature(gssapi) {
+  expand(GSSAPI_INCDIR) {
+    $GSSAPI_INCDIR
+    $(GSSAPI_ROOT)/include
+  }
+  expand(GSSAPI_LIBDIR) {
+    $GSSAPI_LIBDIR
+    $(GSSAPI_ROOT)/lib
+  }
+
+  includes += $(GSSAPI_INCDIR)
+  libpaths += $(GSSAPI_LIBDIR)
+  macros   += TAO_HAS_GSSAPI
+  lit_libs += gssapi_krb5
+}

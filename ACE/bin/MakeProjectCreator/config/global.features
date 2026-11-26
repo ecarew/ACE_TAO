@@ -34,6 +34,7 @@ java          = 0
 zlib          = 0
 zzip          = 0
 bzip2         = 0
+gssapi        = 0
 lzo1          = 0
 lzo2          = 0
 ipv6          = 0

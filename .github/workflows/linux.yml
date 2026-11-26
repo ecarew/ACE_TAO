@@ -127,6 +127,13 @@ jobs:
             os: ubuntu-24.04
             optional_feature: uses_wchar=1
             optional_macros: inline=0
+          - feature: Kerberos
+            CC: gcc-14
+            CXX: g++-14
+            PackageDeps: g++-14 libkrb5-dev
+            platform_file: include $(ACE_ROOT)/include/makeinclude/platform_linux.GNU
+            os: ubuntu-24.04
+            optional_feature: gssapi=1
           - feature: CodeQL
             CC: gcc-10
             CXX: g++-10

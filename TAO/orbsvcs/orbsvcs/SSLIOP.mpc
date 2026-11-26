@@ -1,5 +1,5 @@
 // -*- MPC -*-
-project(SSLIOP) : orbsvcslib, orbsvcs_output, install, security, ssl, pi_server, interceptors, tao_versioning_idl_defaults, svc_utils {
+project(SSLIOP) : orbsvcslib, orbsvcs_output, install, security, ssl, pi_server, interceptors, tao_versioning_idl_defaults, svc_utils, ace_gssapi {
   sharedname   = TAO_SSLIOP
   idlflags    += -Wb,export_macro=TAO_SSLIOP_Export -Wb,export_include=orbsvcs/SSLIOP/SSLIOP_Export.h -SS
   dynamicflags += TAO_SSLIOP_BUILD_DLL
@@ -34,8 +34,9 @@ project(SSLIOP) : orbsvcslib, orbsvcs_output, install, security, ssl, pi_server,
       ./SSLIOP/SSLIOP_SAS.cpp
       ./SSLIOP/SSLIOP_GSSUP_Store.cpp
       ./SSLIOP/SSLIOP_Asserter_List.cpp
-    ./SSLIOP/SSLIOP_GSSUP_Credentials.cpp
-    ./SSLIOP/SSLIOP_SAS_Client.cpp
+      ./SSLIOP/SSLIOP_GSSUP_Credentials.cpp
+      ./SSLIOP/SSLIOP_SAS_Client.cpp
+      ./SSLIOP/SSLIOP_Kerberos.cpp
       ./SSLIOP/SSLIOP_Endpoint.cpp
       ./SSLIOP/SSLIOP_EVP_PKEY.cpp
       ./SSLIOP/SSLIOP_Factory.cpp

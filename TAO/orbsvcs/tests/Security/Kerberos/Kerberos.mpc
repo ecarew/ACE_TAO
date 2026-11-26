@@ -1,0 +1,7 @@
+// -*- MPC -*-
+project(*Probe) : taoexe, orbsvcslib, security, ssliop {
+  exename = krb_probe
+  Source_Files {
+    krb_probe.cpp
+  }
+}
