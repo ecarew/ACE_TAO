@@ -96,6 +96,14 @@ expect ('access sign refuses a key that is not the pinned signer',
 spit ("$work/bad.list", "version 1\nissued $now\nallow spiffe://x /a*b\n");
 expect ('access sign refuses a malformed list',
         `$tool --conf $conf access sign $sign --file $work/bad.list 2>&1`, ['line 3: \* may only end the object']);
+spit ("$work/star.list", "version 1\nissued $now\nallow spiffe://x /a *\n");
+expect ('a lone * in the operations means every operation',
+        `$tool --conf $conf access sign $sign --file $work/star.list 2>&1 && $tool --conf $conf access check --file $work/star.list 2>&1`,
+        ['allow spiffe://x /a \(all operations\)']);
+spit ("$work/star2.list", "version 1\nissued $now\nallow spiffe://x /a * whoami\n");
+expect ('* listed with named operations is refused',
+        `$tool --conf $conf access sign $sign --file $work/star2.list 2>&1`,
+        ['line 3: \* stands for every operation and cannot be listed with others']);
 
 sub try { my ($args) = @_; my $o = `$tool --conf $conf access test $args 2>&1`; return ($o, $? >> 8); }
 my ($t, $rc) = try ('--principal spiffe://ace-tao.test/client --object /RootPOA/Who/beta --op poke');

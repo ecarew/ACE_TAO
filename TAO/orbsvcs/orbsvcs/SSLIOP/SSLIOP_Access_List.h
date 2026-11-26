@@ -25,7 +25,7 @@
  *    @c * for any identified caller;
  *  - object: "/" + POA names + "/" + object id, exactly, or a prefix
  *    ending in @c *, or @c * alone for every object;
- *  - operations: none means all;
+ *  - operations: none, or @c * alone, means all;
  *  - via=ASSERTER after the object: the rule matches only a caller whose
  *    identity ASSERTER asserted (CSIv2 identity assertion), or any
  *    asserted caller with via=*.

@@ -51,7 +51,8 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
   (security.conf: access_list, access_list_signer, access_list_signer_sha256,
   access_list_reload, access_default, audit_grants). Rules allow or deny a
   principal (or * for any identified caller) an object path (exact, a
-  prefix ending in *, or *) and optionally named operations; a deny wins.
+  prefix ending in *, or *) and optionally named operations (none, or *
+  alone, means all); a deny wins.
   A request no rule covers gets access_default (allow unless set to deny);
   prod always refuses it and refuses to start without a pinned, loadable
   list. Refusals are audit records (ACCESS_DENIED, with the principal,

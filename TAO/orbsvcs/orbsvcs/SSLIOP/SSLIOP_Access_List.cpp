@@ -127,6 +127,17 @@ TAO::SSLIOP::Access_List::parse (std::string const &text, Content &out, std::str
               else
                 r.operations.insert (w[i]);
             }
+          // "*" alone means every operation, as it does for the principal
+          // and the object; beside named operations it is a mistake.
+          if (r.operations.count ("*") != 0)
+            {
+              if (r.operations.size () != 1)
+                {
+                  error = where + "* stands for every operation and cannot be listed with others";
+                  return false;
+                }
+              r.operations.clear ();
+            }
           out.rules.push_back (r);
         }
       else
