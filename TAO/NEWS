@@ -114,6 +114,25 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
   address and returns why a login failed. New test
   orbsvcs/tests/Security/GSSUP_Store.
 
+. CSIv2 identity assertion on SSLIOP servers. With security.conf
+  csiv2_asserters naming a signed asserter list (same signer and pinning
+  as the deny-list; "ace-tao-setup asserters sign|check"), an identity
+  token is accepted only from a listed asserter, matched on its
+  certificate (SPIFFE ID or subject) or on its own GSSUP login, and only
+  for the identity types (name, dn, x509, anonymous) and realms its entry
+  allows (default: names in the service's own realm). Asserted
+  user@realm names, distinguished names and certificate chains (verified
+  against the trust store and the deny-list) become the caller's
+  effective principal; the asserter stays in the caller record, in the
+  servant's alternate names, in the audit records (SAS_ACCEPTED,
+  ACCESS_GRANTED/DENIED carry asserter=) and in access-list rules, which
+  can require it with via=ASSERTER. Refusals are ContextError 1
+  (ASSERTION_REJECTED), or 2 for an unsupported token type or with no
+  asserter list. Anonymous assertion needs allow_anonymous_assertion = on
+  (self-check warns). "asserter *" (presumed trust) is refused. References
+  advertise identity assertion in their SAS layer. New test
+  orbsvcs/tests/Security/Assertion.
+
 . SSLIOP never negotiates below TLS 1.2: SSL 3.0, TLS 1.0 and TLS 1.1 are
   refused in every mode, whatever -SSLVersionList says (asking for them
   logs a warning). The startup self-check reports it (tls_versions).

@@ -25,7 +25,14 @@
  *    @c * for any identified caller;
  *  - object: "/" + POA names + "/" + object id, exactly, or a prefix
  *    ending in @c *, or @c * alone for every object;
- *  - operations: none means all.
+ *  - operations: none means all;
+ *  - via=ASSERTER after the object: the rule matches only a caller whose
+ *    identity ASSERTER asserted (CSIv2 identity assertion), or any
+ *    asserted caller with via=*.
+ *
+ *  @code
+ *    allow alice@lab.test /RootPOA/Ledger/accounts read via=spiffe://ace-tao.test/portal
+ *  @endcode
  *
  *  A matching deny wins over any allow; a request no rule matches gets
  *  the default (access_default; always deny in prod).  The file sits
@@ -81,6 +88,7 @@ namespace TAO
         std::string object;              ///< without the trailing '*' when prefix
         bool prefix = false;
         std::set<std::string> operations;  ///< empty: all
+        std::string via;                 ///< required asserter; "*" any; empty: none required
       };
 
       struct Content

@@ -217,8 +217,11 @@ TAO::SSLIOP::Server_Invocation_Interceptor::receive_request (
               TAO::Security::Audit_Record rec ("authz", allowed != 0,
                                                allowed ? TAO::Security::Audit_Reason::ACCESS_GRANTED
                                                        : TAO::Security::Audit_Reason::ACCESS_DENIED);
-              rec.field ("principal", caller->effective ())
-                .field ("subject", caller->subject)
+              rec.field ("principal", caller->effective ());
+              // R24: an asserted caller's record names who vouched for it.
+              if (!caller->asserter.empty ())
+                rec.field ("asserter", caller->asserter);
+              rec.field ("subject", caller->subject)
                 .field ("cert_serial", caller->serial)
                 .field ("src", caller->source)
                 .field ("object", path)

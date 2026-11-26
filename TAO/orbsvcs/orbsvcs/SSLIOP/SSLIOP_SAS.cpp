@@ -1,4 +1,6 @@
 #include "orbsvcs/SSLIOP/SSLIOP_SAS.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Asserter_List.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Deny_List.h"
 
 #include "orbsvcs/Security/Audit_Logger.h"
 #include "orbsvcs/Security/CSI_Utils.h"
@@ -9,7 +11,14 @@
 
 #include "ace/OS_NS_string.h"
 
+#include "ace/SSL/SSL_Context.h"
+
 #include <openssl/crypto.h>
+#include <openssl/x509.h>
+#include <openssl/x509_vfy.h>
+#include <openssl/x509v3.h>
+
+#include <memory>
 
 TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -179,12 +188,233 @@ namespace
       .field ("op", operation == nullptr ? "" : operation);
     if (!user.empty ())
       rec.field ("user", user);
+    if (!caller.asserter.empty ())
+      rec.field ("asserter", caller.asserter);
+    if (!caller.asserted.empty ())
+      rec.field ("asserted", caller.asserted);
     if (major != 0)
       rec.field ("context_error", std::to_string (major));
     rec.text (why);
     TAO::Security::Audit_Logger::instance ()->write (rec);
 
     throw CORBA::NO_PERMISSION (CORBA::OMGVMCID | 1, CORBA::COMPLETED_NO);
+  }
+
+  std::string
+  rfc2253 (X509_NAME *name)
+  {
+    std::string out;
+    BIO *const b = ::BIO_new (::BIO_s_mem ());
+    if (b == nullptr)
+      return out;
+    if (::X509_NAME_print_ex (b, name, 0, XN_FLAG_RFC2253) >= 0)
+      {
+        char *data = nullptr;
+        long const n = ::BIO_get_mem_data (b, &data);
+        if (n > 0 && data != nullptr)
+          out.assign (data, static_cast<size_t> (n));
+      }
+    ::BIO_free (b);
+    return out;
+  }
+
+  /// A printable name (no blanks or control characters), 1 to 256 bytes.
+  bool
+  printable (std::string const &s)
+  {
+    if (s.empty () || s.size () > 256)
+      return false;
+    for (char const ch : s)
+      {
+        unsigned char const u = static_cast<unsigned char> (ch);
+        if (u < 0x21 || u > 0x7e)
+          return false;
+      }
+    return true;
+  }
+
+  struct Free_X509 { void operator() (X509 *x) const { ::X509_free (x); } };
+  struct Free_Stack { void operator() (STACK_OF (X509) *s) const { sk_X509_pop_free (s, ::X509_free); } };
+  struct Free_Store_Ctx { void operator() (X509_STORE_CTX *c) const { ::X509_STORE_CTX_free (c); } };
+
+  /**
+   * Decodes an asserted certificate chain (DER SEQUENCE OF Certificate,
+   * the subject's certificate first), verifies it as a client chain
+   * against the service's trust store and the deny-list, and names it.
+   */
+  bool
+  asserted_chain (std::string const &der, std::string &name, std::string &why)
+  {
+    unsigned char const *p = reinterpret_cast<unsigned char const *> (der.data ());
+    long len = 0;
+    int tag = 0, xclass = 0;
+    int const r = ::ASN1_get_object (&p, &len, &tag, &xclass, static_cast<long> (der.size ()));
+    if ((r & 0x80) != 0 || tag != V_ASN1_SEQUENCE
+        || p + len != reinterpret_cast<unsigned char const *> (der.data ()) + der.size ())
+      {
+        why = "the certificate chain is not a DER SEQUENCE";
+        return false;
+      }
+    unsigned char const *const end = p + len;
+    std::unique_ptr<X509, Free_X509> leaf;
+    std::unique_ptr<STACK_OF (X509), Free_Stack> rest (sk_X509_new_null ());
+    while (p < end)
+      {
+        X509 *const x = ::d2i_X509 (nullptr, &p, static_cast<long> (end - p));
+        if (x == nullptr)
+          {
+            why = "undecodable certificate in the chain";
+            return false;
+          }
+        if (!leaf)
+          leaf.reset (x);
+        else
+          sk_X509_push (rest.get (), x);
+      }
+    if (!leaf)
+      {
+        why = "empty certificate chain";
+        return false;
+      }
+    X509_STORE *const store = ::SSL_CTX_get_cert_store (ACE_SSL_Context::instance ()->context ());
+    std::unique_ptr<X509_STORE_CTX, Free_Store_Ctx> ctx (::X509_STORE_CTX_new ());
+    if (store == nullptr || !ctx || ::X509_STORE_CTX_init (ctx.get (), store, leaf.get (), rest.get ()) != 1)
+      {
+        why = "no trust store to verify the chain";
+        return false;
+      }
+    ::X509_STORE_CTX_set_purpose (ctx.get (), X509_PURPOSE_SSL_CLIENT);
+    if (::X509_verify_cert (ctx.get ()) != 1)
+      {
+        why = std::string ("the certificate chain does not verify: ")
+              + ::X509_verify_cert_error_string (::X509_STORE_CTX_get_error (ctx.get ()));
+        return false;
+      }
+    std::string const denied = TAO::SSLIOP::Deny_List::instance ()->check (leaf.get ());
+    if (!denied.empty ())
+      {
+        why = "the asserted certificate is on the deny-list (" + denied + ")";
+        return false;
+      }
+    std::set<std::string> const ids = TAO::SSLIOP::Deny_List::spiffe_ids_of (leaf.get ());
+    name = !ids.empty () ? *ids.begin () : rfc2253 (::X509_get_subject_name (leaf.get ()));
+    if (name.empty ())
+      {
+        why = "the asserted certificate has no SPIFFE ID or subject";
+        return false;
+      }
+    return true;
+  }
+
+  /// Accepts the identity token from a listed asserter (R22-R24), or
+  /// refuses the request.
+  void
+  assert_identity (PortableInterceptor::ServerRequestInfo_ptr ri,
+                   TAO::Security::Caller &caller,
+                   char const *operation,
+                   CSI::ContextId id,
+                   CSI::IdentityToken const &token,
+                   SAS_Target::Config const &c)
+  {
+    if (!c.assertion)
+      refuse (ri, caller, operation, id, 2, Reason::SAS_INVALID_MECH,
+              "identity assertion is not supported here (no csiv2_asserters)");
+
+    // Who is asserting: its GSSUP login, else its certificate's SPIFFE
+    // IDs and subject (CSIv2 backward trust, rule 2).
+    std::vector<std::string> candidates;
+    candidates.push_back (caller.authenticated);
+    for (std::string const &sid : caller.spiffe_ids)
+      candidates.push_back (sid);
+    candidates.push_back (caller.subject);
+    TAO::SSLIOP::Asserter_List::Entry entry;
+    if (!TAO::SSLIOP::Asserter_List::instance ()->find (candidates, entry))
+      {
+        std::string const who = caller.authenticated.empty () ? caller.transport () : caller.authenticated;
+        refuse (ri, caller, operation, id, 1, Reason::ASSERTION_REJECTED,
+                ("asserter " + who + " is not on the asserter list").c_str ());
+      }
+    caller.asserter = entry.principal;
+
+    unsigned long const type = static_cast<unsigned long> (token._d ());
+    std::string const type_name = TAO::SSLIOP::Asserter_List::type_names (type);
+    if (type != CSI::ITTAnonymous && type != CSI::ITTPrincipalName && type != CSI::ITTDistinguishedName
+        && type != CSI::ITTX509CertChain)
+      refuse (ri, caller, operation, id, 2, Reason::SAS_INVALID_MECH,
+              ("identity token type " + std::to_string (type) + " is not supported").c_str ());
+    if ((entry.types & type) == 0)
+      refuse (ri, caller, operation, id, 1, Reason::ASSERTION_REJECTED,
+              ("the asserter may not assert identity type " + type_name).c_str ());
+
+    std::string asserted;
+    std::string why;
+    switch (type)
+      {
+      case CSI::ITTAnonymous:
+        if (!c.anonymous)
+          refuse (ri, caller, operation, id, 1, Reason::ASSERTION_REJECTED,
+                  "anonymous assertion is off (allow_anonymous_assertion)");
+        asserted = "anonymous";
+        break;
+
+      case CSI::ITTPrincipalName:
+        {
+          // An exported name of the GSSUP mechanism: 04 01, the OID, the name.
+          std::string const o = octets (token.principal_name ());
+          std::string const oid = SAS_Target::gssup_mech_der ();
+          std::string name;
+          bool ok = o.size () >= 8 + oid.size () && o[0] == '\x04' && o[1] == '\x01'
+                    && static_cast<size_t> ((static_cast<unsigned char> (o[2]) << 8) | static_cast<unsigned char> (o[3])) == oid.size ()
+                    && o.compare (4, oid.size (), oid) == 0;
+          if (ok)
+            ok = SAS_Target::parse_exported_name (o, name) && printable (name);
+          if (!ok)
+            refuse (ri, caller, operation, id, 1, Reason::ASSERTION_REJECTED,
+                    "the asserted name is not a well-formed GSSUP exported name");
+          size_t const at = name.rfind ('@');
+          if (at == std::string::npos)
+            {
+              if (c.target.empty ())
+                refuse (ri, caller, operation, id, 1, Reason::ASSERTION_REJECTED,
+                        "an unscoped name needs gssup_target");
+              name += c.target;
+            }
+          else if (at == 0)
+            refuse (ri, caller, operation, id, 1, Reason::ASSERTION_REJECTED, "the asserted name has no user");
+          std::string const realm = name.substr (name.rfind ('@'));
+          bool const realm_ok = entry.realms.count ("*") != 0 || entry.realms.count (realm) != 0
+                                || (entry.realms.empty () && realm == c.target);
+          if (!realm_ok)
+            {
+              caller.asserted = name;
+              refuse (ri, caller, operation, id, 1, Reason::ASSERTION_REJECTED,
+                      ("the asserter may not assert names in realm " + realm).c_str ());
+            }
+          asserted = name;
+        }
+        break;
+
+      case CSI::ITTDistinguishedName:
+        {
+          std::string const der = octets (token.dn ());
+          unsigned char const *p = reinterpret_cast<unsigned char const *> (der.data ());
+          X509_NAME *const n = ::d2i_X509_NAME (nullptr, &p, static_cast<long> (der.size ()));
+          if (n != nullptr && p == reinterpret_cast<unsigned char const *> (der.data ()) + der.size ())
+            asserted = rfc2253 (n);
+          if (n != nullptr)
+            ::X509_NAME_free (n);
+          if (asserted.empty ())
+            refuse (ri, caller, operation, id, 1, Reason::ASSERTION_REJECTED,
+                    "the asserted distinguished name is not a DER Name");
+        }
+        break;
+
+      default:   // CSI::ITTX509CertChain
+        if (!asserted_chain (octets (token.certificate_chain ()), asserted, why))
+          refuse (ri, caller, operation, id, 1, Reason::ASSERTION_REJECTED, why.c_str ());
+        break;
+      }
+    caller.asserted = asserted;
   }
 }
 
@@ -203,6 +433,8 @@ SAS_Target::config ()
     if (!r.target.empty () && r.target[0] != '@')
       r.target = "@" + r.target;
     r.audit_grants = h.get ("audit_grants") == "on";
+    r.assertion = r.csiv2 != 0 && !h.get ("csiv2_asserters").empty ();
+    r.anonymous = h.get ("allow_anonymous_assertion") == "on";
     return r;
   } ();
   return c;
@@ -394,9 +626,6 @@ SAS_Target::process (PortableInterceptor::ServerRequestInfo_ptr ri,
           .text ("authorization token ignored (no Level 1 support)"));
     }
 
-  if (ec.identity_token._d () != CSI::ITTAbsent)
-    refuse (ri, caller, operation, id, 2, Reason::SAS_INVALID_MECH, "identity assertion is not supported");
-
   if (ec.client_authentication_token.length () > 0)
     {
       if (c.gssup == 0)
@@ -454,6 +683,11 @@ SAS_Target::process (PortableInterceptor::ServerRequestInfo_ptr ri,
       refuse (ri, caller, operation, id, 2, Reason::SAS_INVALID_MECH, "GSSUP client authentication is required");
     }
 
+  // Identity assertion, once the asserter's own identity is known (its
+  // certificate, and its GSSUP login if it sent one).
+  if (ec.identity_token._d () != CSI::ITTAbsent)
+    assert_identity (ri, caller, operation, id, ec.identity_token, c);
+
   CSI::CompleteEstablishContext done;
   done.client_context_id = id;
   done.context_stateful = false;   // R12: stateless
@@ -467,6 +701,7 @@ SAS_Target::process (PortableInterceptor::ServerRequestInfo_ptr ri,
       TAO::Security::Audit_Record ("authn", true, Reason::SAS_ACCEPTED)
         .field ("principal", caller.effective ())
         .field ("transport_principal", caller.transport ())
+        .field ("asserter", caller.asserter)
         .field ("src", caller.source)
         .field ("op", operation == nullptr ? "" : operation));
   return ACCEPTED;

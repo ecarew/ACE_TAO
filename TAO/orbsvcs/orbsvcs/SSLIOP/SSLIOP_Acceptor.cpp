@@ -189,6 +189,19 @@ TAO::SSLIOP::Acceptor::add_csiv2_component (TAO_SSLIOP_Profile *pfile, size_t fi
   mech.sas_context_mech.privilege_authorities.length (0);
   mech.sas_context_mech.supported_naming_mechanisms.length (0);
   mech.sas_context_mech.supported_identity_types = 0;
+  // Attribute layer: identity assertion when an asserter list is
+  // configured (W5).  Every type a listed asserter could be allowed is
+  // advertised; the list limits each asserter.
+  if (sas.assertion)
+    {
+      mech.sas_context_mech.target_supports = CSIIOP::IdentityAssertion;
+      mech.sas_context_mech.supported_identity_types =
+        CSI::ITTPrincipalName | CSI::ITTDistinguishedName | CSI::ITTX509CertChain | (sas.anonymous ? CSI::ITTAnonymous : 0);
+      std::string const oid = TAO::SSLIOP::SAS_Target::gssup_mech_der ();
+      mech.sas_context_mech.supported_naming_mechanisms.length (1);
+      mech.sas_context_mech.supported_naming_mechanisms[0].length (static_cast<CORBA::ULong> (oid.size ()));
+      ACE_OS::memcpy (mech.sas_context_mech.supported_naming_mechanisms[0].get_buffer (), oid.data (), oid.size ());
+    }
 
   IOP::TaggedComponent component;
   component.tag = IOP::TAG_CSI_SEC_MECH_LIST;

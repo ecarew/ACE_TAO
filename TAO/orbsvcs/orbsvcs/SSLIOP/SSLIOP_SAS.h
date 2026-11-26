@@ -14,13 +14,23 @@
  *  answered with CompleteEstablishContext (context_stateful false) and
  *  fills the request's caller record; anything else is answered with a
  *  ContextError (CORBA 3.3 Part 2, 10.3.5) and NO_PERMISSION, and
- *  audited.  Identity assertion is refused (Invalid mechanism) until W5;
- *  authorization tokens are ignored (audited).
+ *  audited.  Authorization tokens are ignored (audited).
+ *
+ *  Identity assertion (W5: R22-R24): an identity token is accepted only
+ *  from an asserter on the signed asserter list (SSLIOP_Asserter_List.h),
+ *  matched against the caller's own GSSUP login or its certificate, and
+ *  only for the identity types and realms its entry allows.  Asserted
+ *  names (user@realm), distinguished names and certificate chains (which
+ *  must verify against the service's trust store and pass the deny-list)
+ *  become the caller's asserted principal; the asserter is kept beside
+ *  it.  Anything else is ContextError 1 (ASSERTION_REJECTED), or 2 for an
+ *  unsupported token type or with no asserter list.
  *
  *  security.conf keys: csiv2 (off, supported, required: required means a
  *  request without a SAS context is refused), csiv2_gssup (off,
- *  supported, required) and gssup_target (the service's GSSUP target
- *  name, a scoped name like "@lab.example").
+ *  supported, required), gssup_target (the service's GSSUP target
+ *  name, a scoped name like "@lab.example"), csiv2_asserters and
+ *  allow_anonymous_assertion.
  */
 //=============================================================================
 
@@ -58,6 +68,8 @@ namespace TAO
         int gssup = 0;          ///< 0 off, 1 supported, 2 required
         std::string target;     ///< GSSUP target name, "@realm"
         bool audit_grants = false;
+        bool assertion = false;  ///< csiv2_asserters is set
+        bool anonymous = false;  ///< allow_anonymous_assertion = on
       };
       static Config const &config ();
 

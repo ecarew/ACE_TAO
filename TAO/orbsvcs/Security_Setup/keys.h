@@ -23,6 +23,8 @@ int setup_denylist (int argc, ACE_TCHAR *argv[]);
 
 /// access sign|check|test ... (access.cpp)
 int setup_access (int argc, ACE_TCHAR *argv[]);
+/// asserters sign|check ... (access.cpp)
+int setup_asserters (int argc, ACE_TCHAR *argv[]);
 /// user add|passwd|lock|unlock|remove|list ... (user.cpp)
 int setup_user (int argc, ACE_TCHAR *argv[]);
 

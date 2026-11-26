@@ -8,6 +8,7 @@
 #include "orbsvcs/SSLIOP/SSLIOP_Access_List.h"
 #include "orbsvcs/Security/GSSUP_Verifier.h"
 #include "orbsvcs/SSLIOP/SSLIOP_GSSUP_Store.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Asserter_List.h"
 #include "tao/Security_Mode.h"
 #include "ace/OS_NS_strings.h"
 #include "ace/Read_Buffer.h"
@@ -309,6 +310,29 @@ namespace
           else
             Self_Check::contribute ("gssup_store", Self_Check::CHECK_OK, (store->path () + ": " + summary).c_str ());
         }
+
+      // Identity assertion (R22): the asserter list must be signed by the
+      // pinned signer in prod; presumed trust is never offered.
+      TAO::SSLIOP::Asserter_List *const asserters = TAO::SSLIOP::Asserter_List::instance ();
+      if (asserters->configured ())
+        {
+          std::string summary;
+          std::string const csiv2_now = host.get ("csiv2", host.mode == TAO_Security_Mode::MODE_PROD ? "supported" : "off");
+          if (csiv2_now == "off")
+            Self_Check::contribute ("csiv2_asserters", Self_Check::CHECK_WARN,
+                                    "csiv2_asserters is set but csiv2 is off: identity assertion is not offered");
+          else if (host.mode == TAO_Security_Mode::MODE_PROD
+                   && host.get ("csiv2_asserters_signer_sha256", host.get ("denylist_signer_sha256").c_str ()).empty ())
+            Self_Check::contribute ("csiv2_asserters", bad,
+                                    "csiv2_asserters_signer_sha256 (or denylist_signer_sha256) is not set: the signer is not pinned");
+          else if (!asserters->load (summary))
+            Self_Check::contribute ("csiv2_asserters", bad, ("asserter list unusable, every assertion refused: " + summary).c_str ());
+          else
+            Self_Check::contribute ("csiv2_asserters", Self_Check::CHECK_OK, ("identity assertion from " + summary).c_str ());
+        }
+      if (host.get ("allow_anonymous_assertion") == "on")
+        Self_Check::contribute ("csiv2_asserters", Self_Check::CHECK_WARN,
+                                "allow_anonymous_assertion = on: listed asserters may assert anonymous callers");
     }
 
     if (host.mode == TAO_Security_Mode::MODE_PROD)

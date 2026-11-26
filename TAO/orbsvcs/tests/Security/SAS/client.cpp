@@ -2,10 +2,11 @@
 // service context (a client request interceptor adds it) and prints the
 // SAS context of the reply.
 //
-//   client -k IOR [-c whoami|poke] [-m MODE] [-i CONTEXT_ID]
+//   client -k IOR [-c whoami|poke] [-m MODE] [-a ASSERTION] [-i CONTEXT_ID]
 //
 // MODE:
-//   none                    no SAS context
+//   none                    no SAS context (with -a: EstablishContext with
+//                           only the identity token)
 //   gssup:USER:PASS[:TARGET] EstablishContext with a GSSUP token
 //                           (TARGET default @lab.test, as an exported name)
 //   authz:USER:PASS         the same plus a one-element authorization token
@@ -13,6 +14,14 @@
 //   notgssup                a client authentication token for another mechanism
 //   mic                     MessageInContext
 //   garbage                 an undecodable SAS context
+//
+// ASSERTION (an identity token added to the EstablishContext):
+//   name:NAME               ITTPrincipalName (GSSUP exported name)
+//   badoid:NAME             ITTPrincipalName with a Kerberos OID
+//   dn:CERT.pem             ITTDistinguishedName: the certificate's subject
+//   x509:CERT.pem[,CA.pem]  ITTX509CertChain (DER SEQUENCE OF Certificate)
+//   anonymous               ITTAnonymous
+//   type:N                  an identity token of unsupported type N
 //
 // Prints "SAS REPLY complete ctx=N stateful=B", "SAS REPLY error ctx=N
 // major=M minor=N gssup_error=E" or "SAS REPLY none", then "WHOAMI ...",
@@ -35,13 +44,33 @@
 #include "ace/OS_NS_stdlib.h"
 #include "ace/OS_NS_string.h"
 
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+
 #include <string>
 #include <vector>
 
 namespace
 {
   std::string mode = "none";
+  std::string assertion;
   CSI::ContextId context_id = 0;
+
+  std::vector<std::string>
+  split_on (std::string const &s, char sep)
+  {
+    std::vector<std::string> out;
+    size_t p = 0;
+    for (;;)
+      {
+        size_t const c = s.find (sep, p);
+        out.push_back (s.substr (p, c == std::string::npos ? std::string::npos : c - p));
+        if (c == std::string::npos)
+          break;
+        p = c + 1;
+      }
+    return out;
+  }
 
   std::vector<std::string>
   split (std::string const &s)
@@ -66,6 +95,106 @@ namespace
     seq.length (static_cast<CORBA::ULong> (v.size ()));
     if (!v.empty ())
       ACE_OS::memcpy (seq.get_buffer (), v.data (), v.size ());
+  }
+
+  /// DER of the certificate in @a pem (empty on failure).
+  std::string
+  cert_der (std::string const &pem, bool subject_only)
+  {
+    std::string out;
+    FILE *const fp = ACE_OS::fopen (pem.c_str (), "r");
+    if (fp == nullptr)
+      return out;
+    X509 *const x = ::PEM_read_X509 (fp, nullptr, nullptr, nullptr);
+    ACE_OS::fclose (fp);
+    if (x == nullptr)
+      return out;
+    unsigned char *buf = nullptr;
+    int const n = subject_only ? ::i2d_X509_NAME (::X509_get_subject_name (x), &buf) : ::i2d_X509 (x, &buf);
+    if (n > 0)
+      out.assign (reinterpret_cast<char const *> (buf), static_cast<size_t> (n));
+    ::OPENSSL_free (buf);
+    ::X509_free (x);
+    return out;
+  }
+
+  /// DER length octets.
+  std::string
+  der_length (size_t n)
+  {
+    if (n < 128)
+      return std::string (1, static_cast<char> (n));
+    std::string b;
+    for (; n > 0; n >>= 8)
+      b.insert (b.begin (), static_cast<char> (n & 0xFF));
+    return std::string (1, static_cast<char> (0x80 | b.size ())) + b;
+  }
+
+  bool
+  make_identity (CSI::IdentityToken &tok)
+  {
+    std::string const kind = assertion.substr (0, assertion.find (':'));
+    std::string const arg = assertion.find (':') == std::string::npos ? "" : assertion.substr (assertion.find (':') + 1);
+    if (kind == "name")
+      {
+        CSI::GSS_NT_ExportedName name;
+        set_octets (name, TAO::SSLIOP::SAS_Target::exported_name (arg));
+        tok.principal_name (name);
+      }
+    else if (kind == "badoid")
+      {
+        // 04 01, a Kerberos OID (1.2.840.113554.1.2.2), the name.
+        std::string const oid ("\x06\x09\x2a\x86\x48\x86\xf7\x12\x01\x02\x02", 11);
+        std::string o ("\x04\x01", 2);
+        o += static_cast<char> (0);
+        o += static_cast<char> (oid.size ());
+        o += oid;
+        for (int shift = 24; shift >= 0; shift -= 8)
+          o += static_cast<char> ((arg.size () >> shift) & 0xFF);
+        o += arg;
+        CSI::GSS_NT_ExportedName name;
+        set_octets (name, o);
+        tok.principal_name (name);
+      }
+    else if (kind == "dn")
+      {
+        std::string const der = cert_der (arg, true);
+        if (der.empty ())
+          return false;
+        CSI::X501DistinguishedName dn;
+        set_octets (dn, der);
+        tok.dn (dn);
+      }
+    else if (kind == "x509")
+      {
+        std::string certs;
+        for (std::string const &f : split_on (arg, ','))
+          {
+            std::string const der = cert_der (f, false);
+            if (der.empty ())
+              return false;
+            certs += der;
+          }
+        CSI::X509CertificateChain chain;
+        set_octets (chain, std::string ("\x30", 1) + der_length (certs.size ()) + certs);
+        tok.certificate_chain (chain);
+      }
+    else if (kind == "anonymous")
+      {
+        tok.anonymous (true);
+      }
+    else if (kind == "type")
+      {
+        CSI::IdentityExtension ext;
+        set_octets (ext, std::string ("x", 1));
+        tok.id (ext);
+        tok._d (static_cast<CSI::IdentityTokenType> (ACE_OS::atoi (arg.c_str ())));
+      }
+    else
+      {
+        return false;
+      }
+    return true;
   }
 
   bool
@@ -112,6 +241,10 @@ namespace
             set_octets (name, TAO::SSLIOP::SAS_Target::exported_name ("mallory@lab.test"));
             ec.identity_token.principal_name (name);
           }
+        else if (a[0] == "none")
+          {
+            // Only the identity token (-a).
+          }
         else if (a[0] == "notgssup")
           {
             // A Kerberos-mechanism token: 0x60 len, OID 1.2.840.113554.1.2.2, junk.
@@ -122,6 +255,8 @@ namespace
           {
             return false;
           }
+        if (!assertion.empty () && !make_identity (ec.identity_token))
+          return false;
         body.establish_msg (ec);
       }
     TAO::CSI_Utils::create_sas_service_context (body, sc);
@@ -185,12 +320,12 @@ namespace
     void
     send_request (PortableInterceptor::ClientRequestInfo_ptr ri) override
     {
-      if (mode == "none")
+      if (mode == "none" && assertion.empty ())
         return;
       IOP::ServiceContext sc;
       if (!make_context (sc))
         {
-          ACE_OS::printf ("BAD MODE %s\n", mode.c_str ());
+          ACE_OS::printf ("BAD MODE %s / ASSERTION %s\n", mode.c_str (), assertion.c_str ());
           return;
         }
       ri->add_request_service_context (sc, true);
@@ -227,19 +362,20 @@ ACE_TMAIN (int argc, ACE_TCHAR *argv[])
 
       CORBA::ORB_var orb = CORBA::ORB_init (argc, argv);
       char const *ior = nullptr;
-      ACE_Get_Opt opts (argc, argv, ACE_TEXT ("k:c:m:i:"));
+      ACE_Get_Opt opts (argc, argv, ACE_TEXT ("k:c:m:a:i:"));
       for (int c; (c = opts ()) != -1; )
         switch (c)
           {
           case 'k': ior = ACE_TEXT_ALWAYS_CHAR (opts.opt_arg ()); break;
           case 'c': what = ACE_TEXT_ALWAYS_CHAR (opts.opt_arg ()); break;
           case 'm': mode = ACE_TEXT_ALWAYS_CHAR (opts.opt_arg ()); break;
+          case 'a': assertion = ACE_TEXT_ALWAYS_CHAR (opts.opt_arg ()); break;
           case 'i': context_id = ACE_OS::strtoull (ACE_TEXT_ALWAYS_CHAR (opts.opt_arg ()), nullptr, 10); break;
           default: break;
           }
       if (ior == nullptr)
         {
-          ACE_OS::fprintf (stderr, "usage: client -k IOR [-c whoami|poke] [-m MODE] [-i CONTEXT_ID]\n");
+          ACE_OS::fprintf (stderr, "usage: client -k IOR [-c whoami|poke] [-m MODE] [-a ASSERTION] [-i CONTEXT_ID]\n");
           return 64;
         }
 

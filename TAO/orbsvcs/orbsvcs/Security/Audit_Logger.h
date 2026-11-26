@@ -100,6 +100,10 @@ namespace TAO
       constexpr char const GSSUP_STORE_LOADED[] = "GSSUP_STORE_LOADED";
       constexpr char const GSSUP_STORE_REJECTED[] = "GSSUP_STORE_REJECTED";
       constexpr char const GSSUP_USER_CHANGED[] = "GSSUP_USER_CHANGED";
+      constexpr char const ASSERTION_REJECTED[] = "ASSERTION_REJECTED";
+      constexpr char const ASSERTER_LIST_LOADED[] = "ASSERTER_LIST_LOADED";
+      constexpr char const ASSERTER_LIST_REJECTED[] = "ASSERTER_LIST_REJECTED";
+      constexpr char const ASSERTER_LIST_SIGNED[] = "ASSERTER_LIST_SIGNED";
     }
 
     /**

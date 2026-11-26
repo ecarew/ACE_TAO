@@ -114,7 +114,19 @@ TAO::SSLIOP::Access_List::parse (std::string const &text, Content &out, std::str
           r.prefix = star != std::string::npos;
           r.object = r.prefix ? object.substr (0, star) : object;
           for (size_t i = 2; i < w.size (); ++i)
-            r.operations.insert (w[i]);
+            {
+              if (w[i].compare (0, 4, "via=") == 0)
+                {
+                  if (w[i].size () == 4 || !r.via.empty ())
+                    {
+                      error = where + "via= needs one asserter";
+                      return false;
+                    }
+                  r.via = w[i].substr (4);
+                }
+              else
+                r.operations.insert (w[i]);
+            }
           out.rules.push_back (r);
         }
       else
@@ -148,7 +160,8 @@ TAO::SSLIOP::Access_List::evaluate (Content const &list,
       bool const principal_ok = r.principal == "*" ? identified : r.principal == who;
       bool const object_ok = r.prefix ? path.compare (0, r.object.size (), r.object) == 0 : path == r.object;
       bool const op_ok = r.operations.empty () || r.operations.count (op) != 0;
-      if (!(principal_ok && object_ok && op_ok))
+      bool const via_ok = r.via.empty () || (!caller.asserter.empty () && (r.via == "*" || r.via == caller.asserter));
+      if (!(principal_ok && object_ok && op_ok && via_ok))
         continue;
       if (!r.allow)
         return DENY;

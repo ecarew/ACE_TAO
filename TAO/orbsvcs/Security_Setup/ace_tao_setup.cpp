@@ -95,7 +95,8 @@ namespace
     "  denylist add|remove|sign|check|pin ...\n"
     "  access sign|check|test ...\n"
     "  user add|passwd|lock|unlock|remove|list ...\n"
-    "  (key, cert, denylist, access or user alone prints their options)\n"
+    "  asserters sign|check ...\n"
+    "  (key, cert, denylist, access, asserters or user alone prints their options)\n"
     "  (check --gate exits 2 only on failures, 0 otherwise)\n";
 
   int
@@ -852,6 +853,8 @@ ACE_TMAIN (int argc, ACE_TCHAR *argv[])
     return setup_access (rest, args);
   if (cmd == "user")
     return setup_user (rest, args);
+  if (cmd == "asserters")
+    return setup_asserters (rest, args);
   if (cmd == "run")
     return setup_run (rest, args, prog, conf_path.c_str ());
   return usage (("unknown command " + cmd).c_str ());

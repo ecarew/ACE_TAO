@@ -6,6 +6,8 @@
 //   access sign  --key SPEC [--password-file F] [--file LIST] [--bump]
 //   access check [--file LIST] [--signer PEM]
 //   access test  --principal P --object PATH [--op OP] [--file LIST] [--signer PEM]
+//   asserters sign  --key SPEC [--password-file F] [--file LIST] [--bump]
+//   asserters check [--file LIST] [--signer PEM]
 //
 // The list is edited by hand.  sign checks its syntax and signs it into
 // LIST.sig; --bump first sets its version to the next number and issued
@@ -14,10 +16,16 @@
 // (exit 0 allowed, 2 refused).  LIST defaults to access_list in the
 // security configuration; the signer to access_list_signer, else
 // denylist_signer.  The signer's pin is printed by "denylist pin".
+//
+// "asserters" does the same for the CSIv2 asserter list
+// (orbsvcs/SSLIOP/SSLIOP_Asserter_List.h): csiv2_asserters,
+// csiv2_asserters_signer and csiv2_asserters_signer_sha256, each falling
+// back to the deny-list's.
 
 #include "keys.h"
 
 #include "orbsvcs/SSLIOP/SSLIOP_Access_List.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Asserter_List.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Deny_List.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Signed_File.h"
 #include "orbsvcs/Security/Audit_Logger.h"
@@ -33,6 +41,7 @@
 #include <cctype>
 
 using TAO::SSLIOP::Access_List;
+using TAO::SSLIOP::Asserter_List;
 using TAO::SSLIOP::Deny_List;
 namespace Signed_File = TAO::SSLIOP::Signed_File;
 namespace Reason = TAO::Security::Audit_Reason;
@@ -49,7 +58,11 @@ namespace
     "       ace-tao-setup access test  --principal P --object PATH [--op OP] [--file LIST] [--signer PEM]\n"
     "  LIST defaults to access_list in the security configuration, PEM to access_list_signer\n"
     "  (else denylist_signer).  The list is signed into LIST.sig; --bump sets the next version\n"
-    "  and the current time first.  test exits 0 if the request is allowed, 2 if refused.\n";
+    "  and the current time first.  test exits 0 if the request is allowed, 2 if refused.\n"
+    "       ace-tao-setup asserters sign  --key SPEC [--password-file F] [--file LIST] [--bump]\n"
+    "       ace-tao-setup asserters check [--file LIST] [--signer PEM]\n"
+    "  The CSIv2 asserter list, the same way: LIST defaults to csiv2_asserters, PEM to\n"
+    "  csiv2_asserters_signer (else denylist_signer).\n";
 
   int
   usage (std::string const &problem)
@@ -82,11 +95,13 @@ namespace
   {
     std::string file, key, password_file, signer, principal, object, op;
     bool bump = false;
+    bool asserters = false;   ///< the asserter list, not the access list
   };
 
   int
   parse (int argc, ACE_TCHAR *argv[], Options &o, std::string const &cmd)
   {
+    std::string const what = o.asserters ? "asserters " : "access ";
     for (int i = 0; i < argc; ++i)
       {
         std::string const a = ACE_TEXT_ALWAYS_CHAR (argv[i]);
@@ -100,21 +115,47 @@ namespace
         else if (a == "--op" && more) o.op = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
         else if (a == "--bump") o.bump = true;
         else
-          return usage ("access " + cmd + ": unknown option " + a);
+          return usage (what + cmd + ": unknown option " + a);
       }
+    char const *const file_key = o.asserters ? "csiv2_asserters" : "access_list";
+    char const *const signer_key = o.asserters ? "csiv2_asserters_signer" : "access_list_signer";
     if (o.file.empty ())
-      o.file = setup_conf_get ("access_list");
+      o.file = setup_conf_get (file_key);
     if (o.signer.empty ())
-      o.signer = setup_conf_get ("access_list_signer", setup_conf_get ("denylist_signer").c_str ());
+      o.signer = setup_conf_get (signer_key, setup_conf_get ("denylist_signer").c_str ());
     return EXIT_OK;
   }
 
-  /// The pinned signer for access lists, lower-case, or "".
+  /// The pinned signer for the list, lower-case, or "".
   std::string
-  pinned ()
+  pinned (Options const &o)
   {
-    return lower (setup_conf_get ("access_list_signer_sha256",
+    return lower (setup_conf_get (o.asserters ? "csiv2_asserters_signer_sha256" : "access_list_signer_sha256",
                                   setup_conf_get ("denylist_signer_sha256").c_str ()));
+  }
+
+  /// Parses either list; @a count and @a version describe it.
+  bool
+  parse_list (Options const &o, std::string const &text, long &version, std::string &issued, size_t &count,
+              std::string &error)
+  {
+    if (o.asserters)
+      {
+        Asserter_List::Content c;
+        if (!Asserter_List::parse (text, c, error))
+          return false;
+        version = c.version;
+        issued = c.issued;
+        count = c.entries.size ();
+        return true;
+      }
+    Access_List::Content c;
+    if (!Access_List::parse (text, c, error))
+      return false;
+    version = c.version;
+    issued = c.issued;
+    count = c.rules.size ();
+    return true;
   }
 
   /// Sets "version N+1" and "issued NOW" in @a text, keeping every other line.
@@ -166,7 +207,7 @@ namespace
         return false;
       }
     std::string text;
-    if (!Signed_File::read_verified (o.file, o.signer, pinned (), text, error))
+    if (!Signed_File::read_verified (o.file, o.signer, pinned (o), text, error))
       return false;
     if (!Access_List::parse (text, c, error))
       {
@@ -177,21 +218,25 @@ namespace
   }
 
   int
-  cmd_sign (int argc, ACE_TCHAR *argv[])
+  cmd_sign (int argc, ACE_TCHAR *argv[], bool asserters = false)
   {
     Options o;
+    o.asserters = asserters;
     if (int const rc = parse (argc, argv, o, "sign"))
       return rc;
     if (o.file.empty () || o.key.empty ())
-      return usage ("access sign: --file (or access_list in the configuration) and --key are required");
+      return usage (o.asserters ? "asserters sign: --file (or csiv2_asserters in the configuration) and --key are required"
+                                : "access sign: --file (or access_list in the configuration) and --key are required");
     std::string text, error;
     if (!Signed_File::slurp (o.file, text))
       return refuse ("cannot read " + o.file);
     long version = 0;
     if (o.bump && !bump (text, version, error))
       return refuse (o.file + ": " + error);
-    Access_List::Content c;
-    if (!Access_List::parse (text, c, error))
+    long list_version = 0;
+    std::string issued;
+    size_t count = 0;
+    if (!parse_list (o, text, list_version, issued, count, error))
       return refuse (o.file + ": " + error);
 
     std::string password;
@@ -200,9 +245,10 @@ namespace
     PKEY key (setup_load_key (o.key, password, error));
     if (!key)
       return refuse (error);
-    std::string const want = pinned ();
+    std::string const want = pinned (o);
     if (!want.empty () && Deny_List::spki_sha256 (key.get ()) != want)
-      return refuse ("the key is not the pinned access-list signer (" + want + ")");
+      return refuse (std::string ("the key is not the pinned ") + (o.asserters ? "asserter-list" : "access-list")
+                     + " signer (" + want + ")");
 
     std::string sig;
     if (!setup_sign_text (key.get (), text, sig, error))
@@ -212,25 +258,59 @@ namespace
       return refuse ("the new signature does not verify: " + error);
     if (!setup_write_atomic (o.file + ".sig", sig, 0644, error) || !setup_write_atomic (o.file, text, 0644, error))
       return refuse (error);
-    setup_audit (Reason::ACCESS_LIST_SIGNED, {{"file", o.file}, {"version", std::to_string (c.version)},
-                                              {"rules", std::to_string (c.rules.size ())}});
-    ACE_OS::printf ("%s: version %ld issued %s, %zu rule(s); signed into %s.sig\n",
-                    o.file.c_str (), c.version, c.issued.c_str (), c.rules.size (), o.file.c_str ());
+    char const *const unit = o.asserters ? "asserter(s)" : "rule(s)";
+    setup_audit (o.asserters ? Reason::ASSERTER_LIST_SIGNED : Reason::ACCESS_LIST_SIGNED,
+                 {{"file", o.file}, {"version", std::to_string (list_version)},
+                  {o.asserters ? "asserters" : "rules", std::to_string (count)}});
+    ACE_OS::printf ("%s: version %ld issued %s, %zu %s; signed into %s.sig\n",
+                    o.file.c_str (), list_version, issued.c_str (), count, unit, o.file.c_str ());
     return EXIT_OK;
   }
 
   int
-  cmd_check (int argc, ACE_TCHAR *argv[])
+  cmd_check_asserters (Options const &o)
+  {
+    if (o.file.empty () || o.signer.empty ())
+      return refuse ("--file and --signer are required (or csiv2_asserters and csiv2_asserters_signer / denylist_signer)");
+    std::string text, error;
+    Asserter_List::Content c;
+    if (!Signed_File::read_verified (o.file, o.signer, pinned (o), text, error))
+      return refuse (error);
+    if (!Asserter_List::parse (text, c, error))
+      return refuse (o.file + ": " + error);
+    long const age = static_cast<long> ((ACE_OS::time (nullptr) - c.issued_time) / 86400);
+    std::string const want = pinned (o);
+    ACE_OS::printf ("OK: %s version %ld issued %s (%ld day(s) ago), %zu asserter(s)\n",
+                    o.file.c_str (), c.version, c.issued.c_str (), age, c.entries.size ());
+    ACE_OS::printf ("Signer %s%s\n", o.signer.c_str (),
+                    want.empty () ? " (not pinned: set csiv2_asserters_signer_sha256 or denylist_signer_sha256)"
+                                  : " (pinned)");
+    for (auto const &e : c.entries)
+      {
+        std::string realms;
+        for (auto const &r : e.realms)
+          realms += (realms.empty () ? "" : ",") + r;
+        ACE_OS::printf ("  %s types=%s realms=%s\n", e.principal.c_str (), Asserter_List::type_names (e.types).c_str (),
+                        realms.empty () ? "(the service's gssup_target)" : realms.c_str ());
+      }
+    return EXIT_OK;
+  }
+
+  int
+  cmd_check (int argc, ACE_TCHAR *argv[], bool asserters = false)
   {
     Options o;
+    o.asserters = asserters;
     if (int const rc = parse (argc, argv, o, "check"))
       return rc;
+    if (o.asserters)
+      return cmd_check_asserters (o);
     Access_List::Content c;
     std::string error;
     if (!load_verified (o, c, error))
       return refuse (error);
     long const age = static_cast<long> ((ACE_OS::time (nullptr) - c.issued_time) / 86400);
-    std::string const want = pinned ();
+    std::string const want = pinned (o);
     ACE_OS::printf ("OK: %s version %ld issued %s (%ld day(s) ago), %zu rule(s)\n",
                     o.file.c_str (), c.version, c.issued.c_str (), age, c.rules.size ());
     ACE_OS::printf ("Signer %s%s\n", o.signer.c_str (),
@@ -241,8 +321,9 @@ namespace
         std::string ops;
         for (auto const &op : r.operations)
           ops += " " + op;
-        ACE_OS::printf ("  %-5s %s %s%s%s\n", r.allow ? "allow" : "deny", r.principal.c_str (), r.object.c_str (),
-                        r.prefix ? "*" : "", ops.empty () ? " (all operations)" : ops.c_str ());
+        ACE_OS::printf ("  %-5s %s %s%s%s%s%s\n", r.allow ? "allow" : "deny", r.principal.c_str (), r.object.c_str (),
+                        r.prefix ? "*" : "", ops.empty () ? " (all operations)" : ops.c_str (),
+                        r.via.empty () ? "" : " via=", r.via.c_str ());
       }
     return EXIT_OK;
   }
@@ -298,4 +379,17 @@ setup_access (int argc, ACE_TCHAR *argv[])
   if (sub == "test")
     return cmd_test (argc - 1, argv + 1);
   return usage ("access: unknown subcommand " + sub);
+}
+
+int
+setup_asserters (int argc, ACE_TCHAR *argv[])
+{
+  if (argc < 1)
+    return usage ("asserters: give sign or check");
+  std::string const sub = ACE_TEXT_ALWAYS_CHAR (argv[0]);
+  if (sub == "sign")
+    return cmd_sign (argc - 1, argv + 1, true);
+  if (sub == "check")
+    return cmd_check (argc - 1, argv + 1, true);
+  return usage ("asserters: unknown subcommand " + sub);
 }
