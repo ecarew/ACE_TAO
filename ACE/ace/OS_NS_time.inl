@@ -181,14 +181,17 @@ ACE_OS::ctime_r (const time_t *t, ACE_TCHAR *buf, int buflen)
       return nullptr;
     }
 
-  ACE_TCHAR *result = nullptr;
-#     if defined (ACE_USES_WCHAR)
-  ACE_OSCALL (::_wctime (t), wchar_t *, result);
-#     else /* ACE_USES_WCHAR */
+  char *result = nullptr;
   ACE_OSCALL (::ctime (t), char *, result);
+  if (result == nullptr)
+    return nullptr;
+#     if defined (ACE_USES_WCHAR)
+  // _wctime() is Windows only (handled above); elsewhere convert ctime().
+  ACE_Ascii_To_Wide wide_buf (result);
+  ACE_OS::strsncpy (buf, wide_buf.wchar_rep (), buflen);
+#     else /* ACE_USES_WCHAR */
+  ACE_OS::strsncpy (buf, result, buflen);
 #     endif /* ACE_USES_WCHAR */
-  if (result != nullptr)
-    ACE_OS::strsncpy (buf, result, buflen);
   return buf;
 #endif /* ACE_HAS_REENTRANT_FUNCTIONS */
 }

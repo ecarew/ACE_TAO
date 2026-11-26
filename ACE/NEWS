@@ -1,6 +1,11 @@
 USER VISIBLE CHANGES BETWEEN ACE-8.0.8 and ACE-8.0.9
 ====================================================
 
+. ACE_OS::ctime_r() builds with ACE_USES_WCHAR on platforms without
+  ACE_HAS_REENTRANT_FUNCTIONS other than Windows (macOS among them): it
+  converts ctime()'s result instead of calling the Windows-only _wctime().
+  It also returns null, not an unfilled buffer, when ctime() fails.
+
 . ACE_SSL_SOCK_Acceptor::accept() has an overload that reports why a TLS
   handshake failed in an ACE_SSL_Handshake_Failure: the kind (certificate
   verification, no peer certificate, other TLS error, timeout, peer closed),
