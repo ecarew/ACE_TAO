@@ -93,6 +93,12 @@ TAO::Security::Caller::effective () const
   return this->local ? "local" : "anonymous";
 }
 
+std::string const &
+TAO::Security::Caller::effective_mech () const
+{
+  return this->asserted.empty () ? this->authenticated_mech : this->asserted_mech;
+}
+
 std::vector<std::string>
 TAO::Security::Caller::principals () const
 {
@@ -300,11 +306,19 @@ TAO::Security::Caller_Credentials::delegation_mode ()
 SecurityLevel3::Principal *
 TAO::Security::principal_of (Caller const &caller)
 {
+  // A Kerberos principal (K5) has the SecurityLevel3 Kerberos name type.
+  auto typed = [&caller] (std::string const &n) {
+    SecurityLevel3::PrincipalName pn = name_of (n);
+    if ((n == caller.asserted && caller.asserted_mech == "krb5")
+        || (n == caller.authenticated && caller.authenticated_mech == "krb5"))
+      pn.the_type = SecurityLevel3::NT_KerberosName;
+    return pn;
+  };
   std::vector<std::string> const names = caller.principals ();
   SecurityLevel3::PrincipalNameList alternates;
   alternates.length (names.empty () ? 0 : static_cast<CORBA::ULong> (names.size () - 1));
   for (size_t i = 1; i < names.size (); ++i)
-    alternates[static_cast<CORBA::ULong> (i - 1)] = name_of (names[i]);
+    alternates[static_cast<CORBA::ULong> (i - 1)] = typed (names[i]);
 
   // Ticket groups (K4) as privileges issued by the Kerberos realm, only
   // for the principal whose ticket carried them: never for an asserted
@@ -328,7 +342,7 @@ TAO::Security::principal_of (Caller const &caller)
   OBV_SecurityLevel3::SimplePrincipal *p = nullptr;
   ACE_NEW_THROW_EX (p,
                     OBV_SecurityLevel3::SimplePrincipal (SecurityLevel3::PT_Simple,
-                                                         name_of (caller.effective ()),
+                                                         typed (caller.effective ()),
                                                          SecurityLevel3::PrinAttributeList (),
                                                          privileges,
                                                          caller.effective () != "anonymous",

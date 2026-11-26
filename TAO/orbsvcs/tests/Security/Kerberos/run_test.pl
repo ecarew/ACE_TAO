@@ -180,6 +180,9 @@ sub start_server {
     my ($which, $tamper, $tag) = @_;
     $d = "$work/$which" . (defined $tag ? "_$tag" : '');
     mkdir $d;
+    # A reference left by an earlier server in this directory must not
+    # pass for the new one before it has written its own.
+    unlink ("$d/alpha.ior", "$d/beta.ior");
     $log = "$d/server.log";
     $pid = fork ();
     if ($pid == 0) {
@@ -425,6 +428,75 @@ if ($adskip ne '') {
     stop_server ('none');
     expect ('K4: an MIT ticket (no PAC logon information) carries no groups', slurp ("$work/krb_k3/server.log"),
             ['reason="SAS_ACCEPTED" principal="alice\@LAB\.TEST"'], ['principal="alice\@LAB\.TEST"[^\n]*groups=']);
+}
+
+# --- K5: Kerberos names in identity assertions (R32) -------------------------------
+# A listed asserter may assert a Kerberos principal, within the realms it
+# is allowed (by default the service principal's own); TAO's middle tier
+# asserts a Kerberos caller as a Kerberos name, never as a GSSUP one.
+my $krbtype = 'oid:1\.2\.840\.113554\.1\.2\.2\.1';
+spit ("$work/tool.conf", "mode = test\naudit_sink = stderr\ndenylist_signer = $certs/signer_pub.pem\ndenylist_signer_sha256 = $pin\n");
+my $asserters = "$work/asserters.list";
+spit ($asserters, "version 0\nissued 2026-01-01T00:00:00Z\n"
+                . "asserter spiffe://ace-tao.test/client types=name realms=\@LAB.TEST\n"
+                . "asserter spiffe://ace-tao.test/server types=name realms=\@LAB.TEST\n"
+                . "asserter alice\@LAB.TEST types=name\n");
+$o = `$tool --conf $work/tool.conf asserters sign $sign --file $asserters --bump 2>&1`;
+die "asserters sign failed:\n$o" unless $o =~ /signed into/;
+my $k5base = $base . "krb_keytab = $work/who.keytab\ndenylist_signer = $certs/signer_pub.pem\n"
+           . "denylist_signer_sha256 = $pin\ncsiv2_asserters = $asserters\n";
+spit ("$work/k5.conf", $k5base . "csiv2_kerberos = supported\n");
+spit ("$work/k5off.conf", $k5base);
+spit ("$work/k5mid.conf", $base . "csiv2_kerberos = supported\nkrb_keytab = $work/who.keytab\ncsiv2_assert_caller = on\n");
+chmod (0600, "$work/k5.conf", "$work/k5off.conf", "$work/k5mid.conf");
+
+start_server ('k5');
+$out = call ('whoami', 'none', '-k file://' . "$d/beta.ior" . ' -a krbname:bob@LAB.TEST');
+expect ('K5: a listed asserter may assert a Kerberos principal (served with the Kerberos name type)', $out,
+        ['^SAS REPLY complete ', "^WHOAMI name=$krbtype:bob\\\@LAB\\.TEST "]);
+expect ('K5: ... not one in a realm it may not assert', call ('whoami', 'none', "-k file://$d/beta.ior -a krbname:bob\@OTHER.TEST"),
+        [@refused1], ['^WHOAMI']);
+expect ('K5: ... nor a name without a realm', call ('whoami', 'none', "-k file://$d/beta.ior -a krbname:bob"),
+        [@refused1], ['^WHOAMI']);
+expect ('K5: a name under an unknown mechanism OID is refused', call ('whoami', 'none', "-k file://$d/beta.ior -a badoid:bob\@LAB.TEST"),
+        [@refused1], ['^WHOAMI']);
+$out = call ('whoami', "krb5:$principal:$bind", "-k file://$d/beta.ior -a krbname:carol\@LAB.TEST");
+expect ('K5: a Kerberos-authenticated asserter asserts a name of its service\'s realm', $out,
+        ["^WHOAMI name=$krbtype:carol\\\@LAB\\.TEST "]);
+expect ('  (audited: who asserted, the realm limits)', log_now (),
+        ['reason="SAS_ACCEPTED" principal="bob\@LAB\.TEST" .*asserter="spiffe://ace-tao\.test/client"',
+         'reason="SAS_ACCEPTED" principal="carol\@LAB\.TEST" .*asserter="alice\@LAB\.TEST"',
+         'reason="ASSERTION_REJECTED" .*the asserter may not assert names in realm OTHER\.TEST',
+         'reason="ASSERTION_REJECTED" .*not a well-formed Kerberos principal',
+         'reason="ASSERTION_REJECTED" .*not a well-formed GSSUP or Kerberos exported name']);
+stop_server ('none');
+
+start_server ('k5off');
+expect ('K5: with csiv2_kerberos = off a Kerberos name is refused',
+        call ('whoami', 'none', "-k file://$d/beta.ior -a krbname:bob\@LAB.TEST"), [@refused1], ['^WHOAMI']);
+expect ('  (audited)', log_now (), ['reason="ASSERTION_REJECTED" .*Kerberos names are not accepted here']);
+stop_server ('none');
+
+# TAO end to end: alice logs in to a middle tier with Kerberos; the middle
+# tier (csiv2_assert_caller = on, certificate spiffe://ace-tao.test/server)
+# asserts her to a back end.
+foreach my $back ('k5', 'k5off') {
+    start_server ($back, undef, 'back');
+    my ($bpid, $bd, $blog) = ($pid, $d, $log);
+    start_server ('k5mid');
+    $out = tao ('beta', "-K target= -c relay -r file://$bd/beta.ior");
+    if ($back eq 'k5') {
+        expect ('K5: TAO\'s middle tier asserts a Kerberos caller to a Kerberos back end as a Kerberos name', $out,
+                ['^ACQUIRE OK$', "^RELAY name=$krbtype:alice\\\@LAB\\.TEST "]);
+        expect ('  (back end audit: alice, asserted by the middle tier)', slurp ($blog),
+                ['reason="SAS_ACCEPTED" principal="alice\@LAB\.TEST" .*asserter="spiffe://ace-tao\.test/server"']);
+    } else {
+        expect ('K5: ... and to a back end without Kerberos names asserts nothing (never re-labelled as GSSUP)', $out,
+                ['^ACQUIRE OK$', '^RELAY name=\S+spiffe://ace-tao\.test/server '], ['^RELAY .*alice']);
+    }
+    stop_server ('none');
+    ($pid, $d, $log) = ($bpid, $bd, $blog);
+    stop_server ('none');
 }
 
 # --- the keytab self-check -----------------------------------------------------------------

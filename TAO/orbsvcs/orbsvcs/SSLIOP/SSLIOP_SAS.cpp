@@ -362,8 +362,38 @@ namespace
 
       case CSI::ITTPrincipalName:
         {
-          // An exported name of the GSSUP mechanism: 04 01, the OID, the name.
           std::string const o = octets (token.principal_name ());
+          // R32 (Phase 3 K5): an exported name of the Kerberos mechanism,
+          // where Kerberos is on, under the same limits as a GSSUP name:
+          // a well-formed principal in a realm the asserter may assert
+          // ("@REALM" in its realms=, or "*"; by default the service
+          // principal's own realm).
+          std::string krb_name;
+          if (TAO::SSLIOP::Kerberos::parse_exported_name (o, krb_name))
+            {
+              if (c.kerberos == 0)
+                refuse (ri, caller, operation, id, 1, Reason::ASSERTION_REJECTED,
+                        "Kerberos names are not accepted here (csiv2_kerberos = off)");
+              std::string const realm = TAO::SSLIOP::Kerberos::realm_of (krb_name);
+              if (!printable (krb_name) || realm.empty () || krb_name.size () <= realm.size () + 1)
+                refuse (ri, caller, operation, id, 1, Reason::ASSERTION_REJECTED,
+                        "the asserted name is not a well-formed Kerberos principal (name@REALM)");
+              std::string const scope = "@" + realm;
+              std::string const own = "@" + TAO::SSLIOP::Kerberos::realm_of (c.krb_principal);
+              bool const realm_ok = entry.realms.count ("*") != 0 || entry.realms.count (scope) != 0
+                                    || (entry.realms.empty () && scope == own);
+              if (!realm_ok)
+                {
+                  caller.asserted = krb_name;
+                  refuse (ri, caller, operation, id, 1, Reason::ASSERTION_REJECTED,
+                          ("the asserter may not assert names in realm " + realm).c_str ());
+                }
+              caller.asserted = krb_name;
+              caller.asserted_mech = "krb5";
+              return;
+            }
+
+          // An exported name of the GSSUP mechanism: 04 01, the OID, the name.
           std::string const oid = SAS_Target::gssup_mech_der ();
           std::string name;
           bool ok = o.size () >= 8 + oid.size () && o[0] == '\x04' && o[1] == '\x01'
@@ -373,7 +403,7 @@ namespace
             ok = SAS_Target::parse_exported_name (o, name) && printable (name);
           if (!ok)
             refuse (ri, caller, operation, id, 1, Reason::ASSERTION_REJECTED,
-                    "the asserted name is not a well-formed GSSUP exported name");
+                    "the asserted name is not a well-formed GSSUP or Kerberos exported name");
           std::string value;
           std::string realm;
           if (!SAS_Target::split_scoped (name, value, realm))
@@ -398,6 +428,7 @@ namespace
                       ("the asserter may not assert names in realm " + realm).c_str ());
             }
           asserted = name;
+          caller.asserted_mech = "gssup";
         }
         break;
 
@@ -725,6 +756,7 @@ SAS_Target::process (PortableInterceptor::ServerRequestInfo_ptr ri,
       if (st != TAO::SSLIOP::Kerberos::ACCEPTED)
         refuse (ri, caller, operation, id, 1, Reason::KRB_FAILED, why.c_str ());
       caller.authenticated = client;
+      caller.authenticated_mech = "krb5";
       // R30: AD groups from the ticket's PAC, trusted only once it
       // verified with the ticket; no directory is asked.
       if (pac.verified && !pac.groups.empty ())
@@ -802,6 +834,7 @@ SAS_Target::process (PortableInterceptor::ServerRequestInfo_ptr ri,
           refuse (ri, caller, operation, id, 1, reason, detail.empty () ? "rejected" : detail.c_str (), user, true);
         }
       caller.authenticated = quote_scoped (name) + c.target;
+      caller.authenticated_mech = "gssup";
       mech_name = "gssup";
     }
   else if (c.gssup == 2)

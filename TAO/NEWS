@@ -154,6 +154,18 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
   first TLS credential of such a policy's list rather than only the
   first entry. New test orbsvcs/tests/Security/SAS_Client.
 
+. Kerberos names in CSIv2 identity assertions (Phase 3 K5). Where
+  csiv2_kerberos is on, references list the Kerberos mechanism among the
+  supported naming mechanisms, and a listed asserter may assert a Kerberos
+  principal (an exported name of the Kerberos mechanism) in a realm it is
+  allowed: realms=@REALM or *, by default the service principal's own
+  realm. Malformed names, other realms and unknown mechanism OIDs are
+  refused with ContextError 1 and audited. TAO's middle tier asserts a
+  Kerberos-authenticated caller as a Kerberos name, only to targets that
+  list Kerberos naming, never re-labelled as GSSUP. Caller records each
+  name's mechanism (authenticated_mech, asserted_mech), and SecurityLevel3
+  reports Kerberos principals with NT_KerberosName.
+
 . AD group SIDs from Kerberos tickets (Phase 3 K4). When an accepted ticket
   carries an Active Directory PAC that the GSS-API library verified with
   the ticket, its logon information (MS-PAC KERB_VALIDATION_INFO) gives

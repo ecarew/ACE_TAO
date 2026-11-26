@@ -488,16 +488,26 @@ TAO::SSLIOP::SAS_Client_Interceptor::send_request (PortableInterceptor::ClientRe
       if (caller && !caller->local)
         {
           std::string const name = !caller->asserted.empty () ? caller->asserted : caller->authenticated;
+          // A name goes in its own mechanism (K5): a Kerberos principal
+          // as a Kerberos exported name, to a target that names Kerberos
+          // among its naming mechanisms; never re-labelled as GSSUP.
+          bool const kerberos_name = caller->effective_mech () == "krb5";
           bool gssup_naming = false;
+          bool krb_naming = false;
           for (CORBA::ULong i = 0; i < sas.supported_naming_mechanisms.length (); ++i)
-            if (octets (sas.supported_naming_mechanisms[i]) == SAS_Target::gssup_mech_der ())
-              gssup_naming = true;
+            {
+              std::string const m = octets (sas.supported_naming_mechanisms[i]);
+              gssup_naming = gssup_naming || m == SAS_Target::gssup_mech_der ();
+              krb_naming = krb_naming || m == TAO::SSLIOP::Kerberos::mech_der ();
+            }
           if (!name.empty ())
             {
-              if ((sas.supported_identity_types & CSI::ITTPrincipalName) != 0 && gssup_naming)
+              if ((sas.supported_identity_types & CSI::ITTPrincipalName) != 0
+                  && (kerberos_name ? krb_naming : gssup_naming))
                 {
                   CSI::GSS_NT_ExportedName n;
-                  assign (n, SAS_Target::exported_name (name));
+                  assign (n, kerberos_name ? TAO::SSLIOP::Kerberos::exported_name (name)
+                                           : SAS_Target::exported_name (name));
                   id.principal_name (n);
                   asserted = name;
                 }

@@ -41,7 +41,8 @@
 //
 // ASSERTION (an identity token added to the EstablishContext):
 //   name:NAME               ITTPrincipalName (GSSUP exported name)
-//   badoid:NAME             ITTPrincipalName with a Kerberos OID
+//   krbname:NAME            ITTPrincipalName: a Kerberos exported name (K5)
+//   badoid:NAME             ITTPrincipalName under an unknown mechanism OID
 //   dn:CERT.pem             ITTDistinguishedName: the certificate's subject
 //   x509:CERT.pem[,CA.pem]  ITTX509CertChain (DER SEQUENCE OF Certificate)
 //   anonymous               ITTAnonymous
@@ -184,10 +185,17 @@ namespace
         set_octets (name, TAO::SSLIOP::SAS_Target::exported_name (arg));
         tok.principal_name (name);
       }
+    else if (kind == "krbname")
+      {
+        CSI::GSS_NT_ExportedName name;
+        set_octets (name, TAO::SSLIOP::Kerberos::exported_name (arg));
+        tok.principal_name (name);
+      }
     else if (kind == "badoid")
       {
-        // 04 01, a Kerberos OID (1.2.840.113554.1.2.2), the name.
-        std::string const oid ("\x06\x09\x2a\x86\x48\x86\xf7\x12\x01\x02\x02", 11);
+        // 04 01, an OID no mechanism here uses (1.3.6.1.4.1.32473.1, from
+        // the documentation range), the name.
+        std::string const oid ("\x06\x09\x2b\x06\x01\x04\x01\x81\xfd\x59\x01", 11);
         std::string o ("\x04\x01", 2);
         o += static_cast<char> (0);
         o += static_cast<char> (oid.size ());

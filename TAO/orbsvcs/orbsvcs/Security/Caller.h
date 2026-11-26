@@ -78,6 +78,16 @@ namespace TAO
       std::string asserted;
       std::string asserter;
 
+      /// The mechanism each name belongs to (Phase 3 K5): "krb5" for a
+      /// Kerberos principal, "gssup" for a GSSUP scoped-username, empty
+      /// otherwise.  A middle tier asserts a name in its own mechanism.
+      std::string authenticated_mech;
+      std::string asserted_mech;
+
+      /// The mechanism of effective(): asserted_mech if a name is
+      /// asserted, else authenticated_mech.
+      std::string const &effective_mech () const;
+
       /// Group SIDs from the authenticated principal's verified Kerberos
       /// ticket (its AD PAC, Phase 3 K4), and the realm that issued them.
       /// They belong to @c authenticated: when a name is asserted they
