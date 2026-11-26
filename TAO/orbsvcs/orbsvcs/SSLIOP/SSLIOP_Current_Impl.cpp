@@ -92,7 +92,12 @@ TAO::SSLIOP::Current_Impl::make_caller () const
   if (fd >= 0)
     {
       ACE_SOCK_Stream peer;
+#if defined (ACE_WIN32)
+      // OpenSSL keeps the SOCKET as an int.
+      peer.set_handle (reinterpret_cast<ACE_HANDLE> (static_cast<intptr_t> (fd)));
+#else
       peer.set_handle (static_cast<ACE_HANDLE> (fd));
+#endif
       ACE_INET_Addr addr;
       if (peer.get_remote_addr (addr) == 0)
         {

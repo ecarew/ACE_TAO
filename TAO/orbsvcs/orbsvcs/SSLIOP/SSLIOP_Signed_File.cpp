@@ -4,6 +4,7 @@
 #include "ace/OS_NS_stdio.h"
 #include "ace/OS_NS_string.h"
 #include "ace/OS_NS_sys_stat.h"
+#include "ace/OS_NS_time.h"
 
 #include <openssl/err.h>
 #include <openssl/evp.h>
@@ -51,7 +52,11 @@ TAO::SSLIOP::Signed_File::parse_time (std::string const &s, time_t &out)
   tm_buf.tm_hour = h;
   tm_buf.tm_min = mi;
   tm_buf.tm_sec = se;
+#if defined (ACE_WIN32)
+  out = ::_mkgmtime (&tm_buf);
+#else
   out = ::timegm (&tm_buf);
+#endif
   return out != static_cast<time_t> (-1);
 }
 

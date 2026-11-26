@@ -31,6 +31,7 @@
 
 #include "orbsvcs/Security/Audit_Logger.h"
 
+#include "ace/OS_NS_fcntl.h"
 #include "ace/OS_NS_stdio.h"
 #include "ace/OS_NS_stdlib.h"
 #include "ace/OS_NS_string.h"
