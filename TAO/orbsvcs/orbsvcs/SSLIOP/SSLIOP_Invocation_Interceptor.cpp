@@ -194,7 +194,7 @@ TAO::SSLIOP::Server_Invocation_Interceptor::receive_request (
           // the decision) may add an authenticated (GSSUP) principal, or
           // refuse the request.
           TAO::Security::Caller record = impl->make_caller ();
-          TAO::SSLIOP::SAS_Target::process (ri, record, true, op.in ());
+          TAO::SSLIOP::SAS_Target::process (ri, record, true, op.in (), impl->ssl ());
 
           auto caller = std::make_shared<TAO::Security::Caller const> (std::move (record));
           impl->caller (caller);

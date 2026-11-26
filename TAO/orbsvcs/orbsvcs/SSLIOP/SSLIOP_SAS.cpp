@@ -1,6 +1,7 @@
 #include "orbsvcs/SSLIOP/SSLIOP_SAS.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Asserter_List.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Deny_List.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Kerberos.h"
 
 #include "orbsvcs/Security/Audit_Logger.h"
 #include "orbsvcs/Security/CSI_Utils.h"
@@ -14,6 +15,7 @@
 #include "ace/SSL/SSL_Context.h"
 
 #include <openssl/crypto.h>
+#include <openssl/ssl.h>
 #include <openssl/x509.h>
 #include <openssl/x509_vfy.h>
 #include <openssl/x509v3.h>
@@ -442,6 +444,11 @@ SAS_Target::config ()
     std::string const anon = h.get ("allow_anonymous_assertion");
     r.anonymous = r.csiv2 == 0 ? 0 : anon == "on" ? 2 : anon == "listed" ? 1 : 0;
     r.assert_caller = h.get ("csiv2_assert_caller") == "on";
+    r.kerberos = r.csiv2 == 0 ? 0 : level_of (h.get ("csiv2_kerberos", "off"));
+    r.krb_principal = h.get ("krb_principal");
+    r.krb_keytab = h.get ("krb_keytab");
+    r.krb_rcache = h.get ("krb_rcache");
+    r.krb_binding = level_of (h.get ("krb_channel_binding", "required"));
     return r;
   } ();
   return c;
@@ -617,11 +624,26 @@ SAS_Target::decode_gssup_token (CSI::GSSToken const &token, GSSUP::InitialContex
   return result;
 }
 
+std::string
+SAS_Target::token_mech (std::string const &token)
+{
+  unsigned char const *const d = reinterpret_cast<unsigned char const *> (token.data ());
+  size_t const size = token.size ();
+  size_t p = 0;
+  size_t length = 0;
+  if (size < 2 || d[p++] != 0x60 || !read_length (d, size, p, length))
+    return std::string ();
+  if (size - p < 2 || d[p] != 0x06 || p + 2u + d[p + 1] > size)
+    return std::string ();
+  return token.substr (p, 2u + d[p + 1]);
+}
+
 SAS_Target::Result
 SAS_Target::process (PortableInterceptor::ServerRequestInfo_ptr ri,
                      TAO::Security::Caller &caller,
                      bool tls,
-                     char const *operation)
+                     char const *operation,
+                     ssl_st *ssl)
 {
   Config const &c = config ();
   if (c.csiv2 == 0)
@@ -639,10 +661,11 @@ SAS_Target::process (PortableInterceptor::ServerRequestInfo_ptr ri,
   if (sc.ptr () == nullptr)
     {
       // accept_transport_context: no SAS message.
-      if (c.csiv2 == 2 || c.gssup == 2)
+      if (c.csiv2 == 2 || c.gssup == 2 || c.kerberos == 2)
         refuse (ri, caller, operation, 0, 0, Reason::SAS_MISSING,
-                c.gssup == 2 ? "no SAS context; GSSUP client authentication is required"
-                             : "no SAS context; csiv2 = required");
+                c.gssup == 2      ? "no SAS context; GSSUP client authentication is required"
+                : c.kerberos == 2 ? "no SAS context; Kerberos client authentication is required"
+                                  : "no SAS context; csiv2 = required");
       return NONE;
     }
 
@@ -678,8 +701,36 @@ SAS_Target::process (PortableInterceptor::ServerRequestInfo_ptr ri,
           .text ("authorization token ignored (no Level 1 support)"));
     }
 
-  if (ec.client_authentication_token.length () > 0)
+  std::string final_token;
+  char const *mech_name = "";
+  std::string const auth_mech =
+    ec.client_authentication_token.length () > 0 ? token_mech (octets (ec.client_authentication_token)) : std::string ();
+
+  if (ec.client_authentication_token.length () > 0 && auth_mech == TAO::SSLIOP::Kerberos::mech_der ())
     {
+      // Kerberos V5 (R27, R28).
+      if (c.kerberos == 0)
+        refuse (ri, caller, operation, id, 2, Reason::SAS_INVALID_MECH, "Kerberos client authentication is not offered");
+      if (c.gssup == 2)
+        refuse (ri, caller, operation, id, 2, Reason::SAS_INVALID_MECH, "GSSUP client authentication is required");
+      std::string const token = octets (ec.client_authentication_token);
+      std::string const binding =
+        ssl != nullptr ? TAO::SSLIOP::Kerberos::tls_server_end_point (::SSL_get_certificate (ssl)) : std::string ();
+      std::string client;
+      std::string reply;
+      std::string why;
+      TAO::SSLIOP::Kerberos::Accept_Status const st = TAO::SSLIOP::Kerberos::accept (
+        token, binding, c.krb_principal, c.krb_keytab, c.krb_rcache, c.krb_binding == 2, client, reply, why);
+      if (st != TAO::SSLIOP::Kerberos::ACCEPTED)
+        refuse (ri, caller, operation, id, 1, Reason::KRB_FAILED, why.c_str ());
+      caller.authenticated = client;
+      final_token = reply;
+      mech_name = "krb5";
+    }
+  else if (ec.client_authentication_token.length () > 0)
+    {
+      if (c.kerberos == 2)
+        refuse (ri, caller, operation, id, 2, Reason::SAS_INVALID_MECH, "Kerberos client authentication is required");
       if (c.gssup == 0)
         refuse (ri, caller, operation, id, 2, Reason::SAS_INVALID_MECH, "client authentication is not offered");
 
@@ -743,10 +794,15 @@ SAS_Target::process (PortableInterceptor::ServerRequestInfo_ptr ri,
           refuse (ri, caller, operation, id, 1, reason, detail.empty () ? "rejected" : detail.c_str (), user, true);
         }
       caller.authenticated = quote_scoped (name) + c.target;
+      mech_name = "gssup";
     }
   else if (c.gssup == 2)
     {
       refuse (ri, caller, operation, id, 2, Reason::SAS_INVALID_MECH, "GSSUP client authentication is required");
+    }
+  else if (c.kerberos == 2)
+    {
+      refuse (ri, caller, operation, id, 2, Reason::SAS_INVALID_MECH, "Kerberos client authentication is required");
     }
 
   // Identity assertion, once the asserter's own identity is known (its
@@ -757,7 +813,7 @@ SAS_Target::process (PortableInterceptor::ServerRequestInfo_ptr ri,
   CSI::CompleteEstablishContext done;
   done.client_context_id = id;
   done.context_stateful = false;   // R12: stateless
-  done.final_context_token.length (0);
+  set_octets (done.final_context_token, final_token);
   CSI::SASContextBody reply;
   reply.complete_msg (done);
   add_reply (ri, reply);
@@ -769,7 +825,8 @@ SAS_Target::process (PortableInterceptor::ServerRequestInfo_ptr ri,
         .field ("transport_principal", caller.transport ())
         .field ("asserter", caller.asserter)
         .field ("src", caller.source)
-        .field ("op", operation == nullptr ? "" : operation));
+        .field ("op", operation == nullptr ? "" : operation)
+        .field ("mech", mech_name));
   return ACCEPTED;
 }
 

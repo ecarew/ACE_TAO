@@ -224,19 +224,29 @@ TAO::SSLIOP::SAS_Client_Interceptor::send_request (PortableInterceptor::ClientRe
         && decapsulate (ssl.component_data, ssl_comp) && ssl_comp.port != 0)
       tls_port = true;
   }
+  // The first TLS mechanism whose authentication layer this client can
+  // use (none, or GSSUP); failing that, the first TLS mechanism.  A
+  // target lists Kerberos first (Phase 3 Q5); this client does not send
+  // Kerberos yet (K3), so it moves on to the GSSUP one.
   CORBA::ULong chosen = list.mechanism_list.length ();
-  for (CORBA::ULong i = 0; i < list.mechanism_list.length (); ++i)
-    {
-      CSIIOP::TLS_SEC_TRANS tls;
-      if (list.mechanism_list[i].transport_mech.tag == CSIIOP::TAG_TLS_SEC_TRANS
-          && decapsulate (list.mechanism_list[i].transport_mech.component_data, tls)
-          && tls.addresses.length () > 0)
-        {
-          tls_port = true;
-          chosen = i;
-          break;
-        }
-    }
+  for (int pass = 0; pass < 2 && chosen == list.mechanism_list.length (); ++pass)
+    for (CORBA::ULong i = 0; i < list.mechanism_list.length (); ++i)
+      {
+        CSIIOP::CompoundSecMech const &m = list.mechanism_list[i];
+        CSIIOP::TLS_SEC_TRANS tls;
+        if (m.transport_mech.tag != CSIIOP::TAG_TLS_SEC_TRANS
+            || !decapsulate (m.transport_mech.component_data, tls) || tls.addresses.length () == 0)
+          continue;
+        tls_port = true;
+        std::string const as_oid = octets (m.as_context_mech.client_authentication_mech);
+        bool const usable = (m.as_context_mech.target_supports & CSIIOP::EstablishTrustInClient) == 0
+                            || as_oid.empty () || as_oid == SAS_Target::gssup_mech_der ();
+        if (pass == 1 || usable)
+          {
+            chosen = i;
+            break;
+          }
+      }
   if (chosen == list.mechanism_list.length ())
     chosen = 0;  // e.g. JacORB: TAG_NULL_TAG here, TLS in TAG_SSL_SEC_TRANS
 

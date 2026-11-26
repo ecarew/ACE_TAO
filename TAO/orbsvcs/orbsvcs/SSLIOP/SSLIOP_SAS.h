@@ -32,6 +32,14 @@
  *  Table 10.4).  An anonymous caller is not an identified caller, so the
  *  access list decides what, if anything, it may do.
  *
+ *  Kerberos (Phase 3 K2, R27, R28): with csiv2_kerberos on, a client
+ *  authentication token of the Kerberos V5 mechanism is accepted with
+ *  the service's keytab (SSLIOP_Kerberos.h) and the caller becomes
+ *  user@REALM.  By default the token must be bound to the TLS session
+ *  (krb_channel_binding = required).  At most one of csiv2_kerberos and
+ *  csiv2_gssup may be required; a required mechanism refuses tokens of
+ *  the other.
+ *
  *  GSSUP usernames and asserted GSSUP names are scoped-usernames (10.2.5.2):
  *  "name", "name@scope" or "@scope", with '@' and '\' inside a part
  *  quoted by '\'.  A username's scope, when given, must be the service's
@@ -40,8 +48,12 @@
  *  security.conf keys: csiv2 (off, supported, required: required means a
  *  request without a SAS context is refused), csiv2_gssup (off,
  *  supported, required), gssup_target (the service's GSSUP target
- *  name, a scoped name like "@lab.example"), csiv2_asserters and
- *  allow_anonymous_assertion.
+ *  name, a scoped name like "@lab.example"), csiv2_asserters,
+ *  allow_anonymous_assertion, csiv2_kerberos (off, supported, required),
+ *  krb_principal (the service principal, e.g.
+ *  ace-tao/naming.lab.test@LAB.TEST), krb_keytab, krb_rcache (default:
+ *  the library's replay cache) and krb_channel_binding (off, supported,
+ *  required; default required).
  */
 //=============================================================================
 
@@ -63,6 +75,8 @@
 
 #include <string>
 
+struct ssl_st;
+
 TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 
 namespace TAO
@@ -82,6 +96,11 @@ namespace TAO
         bool assertion = false;  ///< csiv2_asserters is set
         /// allow_anonymous_assertion: 0 off, 1 listed, 2 on (any caller)
         int anonymous = 0;
+        int kerberos = 0;          ///< csiv2_kerberos: 0 off, 1 supported, 2 required
+        std::string krb_principal; ///< krb_principal: the service principal
+        std::string krb_keytab;    ///< krb_keytab
+        std::string krb_rcache;    ///< krb_rcache (empty: the library's default)
+        int krb_binding = 2;       ///< krb_channel_binding: 0 off, 1 supported, 2 required
         /// Client side: assert the current request's caller on calls a
         /// servant makes (csiv2_assert_caller = on).
         bool assert_caller = false;
@@ -99,12 +118,18 @@ namespace TAO
        * adding a ContextError reply context where there was a context to
        * answer, and an audit record) when the context is refused or a
        * required one is missing.  @a tls says whether the request came
-       * over TLS: a SAS context on any other transport is refused.
+       * over TLS: a SAS context on any other transport is refused.  @a
+       * ssl is that TLS session, for Kerberos channel binding.
        */
       static Result process (PortableInterceptor::ServerRequestInfo_ptr ri,
                              TAO::Security::Caller &caller,
                              bool tls,
-                             char const *operation);
+                             char const *operation,
+                             ssl_st *ssl = nullptr);
+
+      /// The DER mechanism OID of a GSS initial context token (0x60,
+      /// length, OID), or empty if it is not one.
+      static std::string token_mech (std::string const &token);
 
       /// @name GSSUP encoding (also used by clients and tests)
       //@{

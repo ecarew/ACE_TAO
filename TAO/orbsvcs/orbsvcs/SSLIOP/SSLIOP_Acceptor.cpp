@@ -2,6 +2,7 @@
 #include "orbsvcs/SSLIOP/SSLIOP_Acceptor.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Profile.h"
 #include "orbsvcs/SSLIOP/SSLIOP_SAS.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Kerberos.h"
 
 #include "tao/MProfile.h"
 #include "tao/ORB_Core.h"
@@ -17,6 +18,8 @@
 #endif /* __ACE_INLINE__ */
 
 #include <algorithm>
+
+#include <vector>
 
 TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -152,43 +155,26 @@ TAO::SSLIOP::Acceptor::add_csiv2_component (TAO_SSLIOP_Profile *pfile, size_t fi
       tls.addresses[static_cast<CORBA::ULong> (i)].port = this->ssl_component_.port;
     }
 
-  CSIIOP::CompoundSecMechList list;
-  list.stateful = false;
-  list.mechanism_list.length (1);
-  CSIIOP::CompoundSecMech &mech = list.mechanism_list[0];
-  mech.target_requires = tls.target_requires;
-  mech.transport_mech.tag = CSIIOP::TAG_TLS_SEC_TRANS;
-  if (!encapsulate (tls, mech.transport_mech.component_data))
+  // One compound mechanism per client authentication mechanism, sharing
+  // the TLS transport and the attribute layer: Kerberos first, then
+  // GSSUP (Phase 3 Q5).  A required mechanism is offered alone; with
+  // none on, one mechanism with an empty authentication layer.
+  CSIIOP::CompoundSecMech base;
+  base.target_requires = tls.target_requires;
+  base.transport_mech.tag = CSIIOP::TAG_TLS_SEC_TRANS;
+  if (!encapsulate (tls, base.transport_mech.component_data))
     return;
+  base.as_context_mech.target_supports = 0;
+  base.as_context_mech.target_requires = 0;
+  base.as_context_mech.client_authentication_mech.length (0);
+  base.as_context_mech.target_name.length (0);
 
-  // Client authentication layer: GSSUP when csiv2_gssup is on and the
-  // service has a GSSUP target name.  No attribute layer (identity
-  // assertion) yet.
-  mech.as_context_mech.target_supports = 0;
-  mech.as_context_mech.target_requires = 0;
-  mech.as_context_mech.client_authentication_mech.length (0);
-  mech.as_context_mech.target_name.length (0);
   TAO::SSLIOP::SAS_Target::Config const &sas = TAO::SSLIOP::SAS_Target::config ();
-  if (sas.gssup != 0 && !sas.target.empty ())
-    {
-      mech.as_context_mech.target_supports = CSIIOP::EstablishTrustInClient;
-      if (sas.gssup == 2)
-        {
-          mech.as_context_mech.target_requires = CSIIOP::EstablishTrustInClient;
-          ACE_SET_BITS (mech.target_requires, CSIIOP::EstablishTrustInClient);
-        }
-      std::string const oid = TAO::SSLIOP::SAS_Target::gssup_mech_der ();
-      std::string const name = TAO::SSLIOP::SAS_Target::exported_name (sas.target);
-      mech.as_context_mech.client_authentication_mech.length (static_cast<CORBA::ULong> (oid.size ()));
-      ACE_OS::memcpy (mech.as_context_mech.client_authentication_mech.get_buffer (), oid.data (), oid.size ());
-      mech.as_context_mech.target_name.length (static_cast<CORBA::ULong> (name.size ()));
-      ACE_OS::memcpy (mech.as_context_mech.target_name.get_buffer (), name.data (), name.size ());
-    }
-  mech.sas_context_mech.target_supports = 0;
-  mech.sas_context_mech.target_requires = 0;
-  mech.sas_context_mech.privilege_authorities.length (0);
-  mech.sas_context_mech.supported_naming_mechanisms.length (0);
-  mech.sas_context_mech.supported_identity_types = 0;
+  base.sas_context_mech.target_supports = 0;
+  base.sas_context_mech.target_requires = 0;
+  base.sas_context_mech.privilege_authorities.length (0);
+  base.sas_context_mech.supported_naming_mechanisms.length (0);
+  base.sas_context_mech.supported_identity_types = 0;
   // Attribute layer: identity assertion when an asserter list is
   // configured (W5).  Every type a listed asserter could be allowed is
   // advertised; the list limits each asserter.
@@ -196,19 +182,51 @@ TAO::SSLIOP::Acceptor::add_csiv2_component (TAO_SSLIOP_Profile *pfile, size_t fi
   // caller even without an asserter list (CSIv2 rule 4).
   if (sas.anonymous == 2 && !sas.assertion)
     {
-      mech.sas_context_mech.target_supports = CSIIOP::IdentityAssertion;
-      mech.sas_context_mech.supported_identity_types = CSI::ITTAnonymous;
+      base.sas_context_mech.target_supports = CSIIOP::IdentityAssertion;
+      base.sas_context_mech.supported_identity_types = CSI::ITTAnonymous;
     }
   if (sas.assertion)
     {
-      mech.sas_context_mech.target_supports = CSIIOP::IdentityAssertion;
-      mech.sas_context_mech.supported_identity_types =
+      base.sas_context_mech.target_supports = CSIIOP::IdentityAssertion;
+      base.sas_context_mech.supported_identity_types =
         CSI::ITTPrincipalName | CSI::ITTDistinguishedName | CSI::ITTX509CertChain | (sas.anonymous != 0 ? CSI::ITTAnonymous : 0);
       std::string const oid = TAO::SSLIOP::SAS_Target::gssup_mech_der ();
-      mech.sas_context_mech.supported_naming_mechanisms.length (1);
-      mech.sas_context_mech.supported_naming_mechanisms[0].length (static_cast<CORBA::ULong> (oid.size ()));
-      ACE_OS::memcpy (mech.sas_context_mech.supported_naming_mechanisms[0].get_buffer (), oid.data (), oid.size ());
+      base.sas_context_mech.supported_naming_mechanisms.length (1);
+      base.sas_context_mech.supported_naming_mechanisms[0].length (static_cast<CORBA::ULong> (oid.size ()));
+      ACE_OS::memcpy (base.sas_context_mech.supported_naming_mechanisms[0].get_buffer (), oid.data (), oid.size ());
     }
+
+  std::vector<CSIIOP::CompoundSecMech> mechs;
+  auto with_as = [&] (std::string const &oid, std::string const &name, bool required) {
+    CSIIOP::CompoundSecMech m = base;
+    m.as_context_mech.target_supports = CSIIOP::EstablishTrustInClient;
+    if (required)
+      {
+        m.as_context_mech.target_requires = CSIIOP::EstablishTrustInClient;
+        ACE_SET_BITS (m.target_requires, CSIIOP::EstablishTrustInClient);
+      }
+    m.as_context_mech.client_authentication_mech.length (static_cast<CORBA::ULong> (oid.size ()));
+    ACE_OS::memcpy (m.as_context_mech.client_authentication_mech.get_buffer (), oid.data (), oid.size ());
+    m.as_context_mech.target_name.length (static_cast<CORBA::ULong> (name.size ()));
+    ACE_OS::memcpy (m.as_context_mech.target_name.get_buffer (), name.data (), name.size ());
+    mechs.push_back (m);
+  };
+  bool const krb = sas.kerberos != 0 && !sas.krb_principal.empty () && TAO::SSLIOP::Kerberos::built ();
+  bool const gssup = sas.gssup != 0 && !sas.target.empty ();
+  if (krb && !(gssup && sas.gssup == 2))
+    with_as (TAO::SSLIOP::Kerberos::mech_der (), TAO::SSLIOP::Kerberos::exported_name (sas.krb_principal),
+             sas.kerberos == 2);
+  if (gssup && !(krb && sas.kerberos == 2))
+    with_as (TAO::SSLIOP::SAS_Target::gssup_mech_der (), TAO::SSLIOP::SAS_Target::exported_name (sas.target),
+             sas.gssup == 2);
+  if (mechs.empty ())
+    mechs.push_back (base);
+
+  CSIIOP::CompoundSecMechList list;
+  list.stateful = false;
+  list.mechanism_list.length (static_cast<CORBA::ULong> (mechs.size ()));
+  for (size_t i = 0; i < mechs.size (); ++i)
+    list.mechanism_list[static_cast<CORBA::ULong> (i)] = mechs[i];
 
   IOP::TaggedComponent component;
   component.tag = IOP::TAG_CSI_SEC_MECH_LIST;

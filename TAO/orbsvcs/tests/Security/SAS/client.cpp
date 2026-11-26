@@ -24,6 +24,13 @@
 //   authz:USER:PASS         the same plus a one-element authorization token
 //   ident                   EstablishContext with an ITTPrincipalName identity token
 //   notgssup                a client authentication token for another mechanism
+//   krb5:PRINCIPAL:BIND[:SAVE] a Kerberos token for service PRINCIPAL from the
+//                           ticket cache (KRB5CCNAME); BIND is "none" or the
+//                           target's certificate (PEM) for channel binding;
+//                           SAVE writes the token to a file
+//   krb5save:PRINCIPAL:BIND:FILE  make that token and write it to FILE, but
+//                           send an EstablishContext without it
+//   rawtoken:FILE           a client authentication token read from FILE
 //   mic                     MessageInContext
 //   garbage                 an undecodable SAS context
 //
@@ -45,6 +52,7 @@
 #include "orbsvcs/GSSUPC.h"
 #include "orbsvcs/Security/CSI_Utils.h"
 #include "orbsvcs/SSLIOP/SSLIOP_SAS.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Kerberos.h"
 #include "orbsvcs/SecurityLevel3C.h"
 #include "orbsvcs/SSLIOPC.h"
 
@@ -128,6 +136,22 @@ namespace
     if (n > 0)
       out.assign (reinterpret_cast<char const *> (buf), static_cast<size_t> (n));
     ::OPENSSL_free (buf);
+    ::X509_free (x);
+    return out;
+  }
+
+  /// Channel-binding data for the certificate in @a pem, or empty.
+  std::string
+  binding_of (std::string const &pem)
+  {
+    if (pem == "none")
+      return std::string ();
+    FILE *const fp = ACE_OS::fopen (pem.c_str (), "r");
+    if (fp == nullptr)
+      return std::string ();
+    X509 *const x = ::PEM_read_X509 (fp, nullptr, nullptr, nullptr);
+    ACE_OS::fclose (fp);
+    std::string const out = TAO::SSLIOP::Kerberos::tls_server_end_point (x);
     ::X509_free (x);
     return out;
   }
@@ -259,6 +283,38 @@ namespace
           {
             // Only the identity token (-a).
           }
+        else if ((a[0] == "krb5" && a.size () >= 3) || (a[0] == "krb5save" && a.size () >= 4))
+          {
+            std::string token;
+            std::string why;
+            if (!TAO::SSLIOP::Kerberos::initiate (a[1], binding_of (a[2]), token, why))
+              {
+                ACE_OS::printf ("KRB5 INIT FAILED %s\n", why.c_str ());
+                return false;
+              }
+            if (a.size () >= 4)
+              {
+                FILE *const fp = ACE_OS::fopen (a[3].c_str (), "wb");
+                if (fp == nullptr || ACE_OS::fwrite (token.data (), 1, token.size (), fp) != token.size ())
+                  return false;
+                ACE_OS::fclose (fp);
+              }
+            if (a[0] == "krb5")
+              set_octets (ec.client_authentication_token, token);
+          }
+        else if (a[0] == "rawtoken" && a.size () >= 2)
+          {
+            FILE *const fp = ACE_OS::fopen (a[1].c_str (), "rb");
+            if (fp == nullptr)
+              return false;
+            std::string token;
+            char buf[4096];
+            size_t n;
+            while ((n = ACE_OS::fread (buf, 1, sizeof buf, fp)) > 0)
+              token.append (buf, n);
+            ACE_OS::fclose (fp);
+            set_octets (ec.client_authentication_token, token);
+          }
         else if (a[0] == "notgssup")
           {
             // A Kerberos-mechanism token: 0x60 len, OID 1.2.840.113554.1.2.2, junk.
@@ -297,9 +353,14 @@ namespace
         return;
       }
     if (body._d () == CSI::MTCompleteEstablishContext)
-      ACE_OS::printf ("SAS REPLY complete ctx=%llu stateful=%d\n",
-                      static_cast<unsigned long long> (body.complete_msg ().client_context_id),
-                      body.complete_msg ().context_stateful ? 1 : 0);
+      {
+        ACE_OS::printf ("SAS REPLY complete ctx=%llu stateful=%d\n",
+                        static_cast<unsigned long long> (body.complete_msg ().client_context_id),
+                        body.complete_msg ().context_stateful ? 1 : 0);
+        if (body.complete_msg ().final_context_token.length () > 0)
+          ACE_OS::printf ("SAS FINAL TOKEN %u octets\n",
+                          static_cast<unsigned> (body.complete_msg ().final_context_token.length ()));
+      }
     else if (body._d () == CSI::MTContextError)
       {
         CSI::ContextError const &e = body.error_msg ();

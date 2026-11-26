@@ -19,5 +19,5 @@ feature(gssapi) {
   includes += $(GSSAPI_INCDIR)
   libpaths += $(GSSAPI_LIBDIR)
   macros   += TAO_HAS_GSSAPI
-  lit_libs += gssapi_krb5
+  lit_libs += gssapi_krb5 krb5 k5crypto com_err
 }

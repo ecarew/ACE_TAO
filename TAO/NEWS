@@ -154,6 +154,23 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
   first TLS credential of such a policy's list rather than only the
   first entry. New test orbsvcs/tests/Security/SAS_Client.
 
+. CSIv2 Kerberos logins on the TAO target (Phase 3 K2; needs the gssapi
+  build). csiv2_kerberos = off | supported | required, with krb_principal
+  (the service principal), krb_keytab and optionally krb_rcache: a client
+  authentication token of the Kerberos V5 mechanism is accepted with the
+  keytab, the caller becomes user@REALM and the Kerberos reply goes back in
+  CompleteEstablishContext. By default the token must be bound to the TLS
+  session with GSS channel bindings carrying the target certificate's hash
+  (RFC 5929 tls-server-end-point; krb_channel_binding = required |
+  supported | off). Unbound, wrongly bound, replayed, expired and
+  wrong-service tokens are refused with ContextError 1 and audited as
+  KRB_FAILED with the reason. References list one compound mechanism per
+  login mechanism, Kerberos first, then GSSUP; a required mechanism is
+  offered alone and refuses the other. TAO's client now picks the first
+  mechanism it can use. The self-check refuses a keytab without keys for
+  the principal, with DES or RC4 keys, or (in prod) not owner-only.
+  Kerberos clock skew follows krb5.conf clockskew (default 300 s).
+
 . SSLIOP can be built with GSS-API (MIT Kerberos) for CSIv2 Kerberos logins,
   the groundwork for Phase 3: the new MPC feature gssapi (off by default;
   base project ace_gssapi, GSSAPI_ROOT or GSSAPI_INCDIR/GSSAPI_LIBDIR)

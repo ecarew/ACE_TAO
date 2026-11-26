@@ -171,7 +171,7 @@ expect ('an undecodable SAS context: major 1', call ('alpha', 'whoami', 'garbage
         ['^SAS REPLY error ctx=0 major=1 minor=1 ', '^whoami EXCEPTION NO_PERMISSION$']);
 expect ('identity assertion (not supported yet): major 2', call ('alpha', 'whoami', 'ident'),
         ['^SAS REPLY error ctx=0 major=2 minor=1 ', '^whoami EXCEPTION NO_PERMISSION$']);
-expect ('a non-GSSUP client authentication token: major 2', call ('alpha', 'whoami', 'notgssup'),
+expect ('a Kerberos client authentication token where Kerberos is off: major 2', call ('alpha', 'whoami', 'notgssup'),
         ['^SAS REPLY error ctx=0 major=2 minor=1 ', '^whoami EXCEPTION NO_PERMISSION$']);
 expect ('an authorization token is ignored (and audited); the login still works', call ('alpha', 'whoami', 'authz:alice:wonderland'),
         ['^SAS REPLY complete ctx=0 stateful=0$', '^WHOAMI name=oid:2\.23\.130\.1\.2\.1:alice\@lab\.test ']);
@@ -184,7 +184,7 @@ expect ('refusals and logins are audited (user named, password never)', $l,
          'reason="SAS_NO_CONTEXT" .*context_error="4"\]',
          'reason="SAS_INVALID_EVIDENCE" .*\] undecodable SAS context',
          'reason="SAS_INVALID_MECH" .*\] identity assertion is not supported',
-         'reason="SAS_INVALID_MECH" .*\] client authentication token is not GSSUP',
+         'reason="SAS_INVALID_MECH" .*\] Kerberos client authentication is not offered',
          'event="authn" result="ok" reason="SAS_AUTHZ_TOKEN_IGNORED"',
          'event="authn" result="ok" reason="SAS_ACCEPTED" principal="alice\@lab\.test" transport_principal="spiffe://ace-tao.test/client"',
          'reason="ACCESS_DENIED" principal="spiffe://ace-tao.test/client" .*object="/RootPOA/Who/alpha" op="whoami"',

@@ -95,6 +95,10 @@ namespace TAO
       constexpr char const SAS_NO_TLS[] = "SAS_NO_TLS";
       constexpr char const SAS_AUTHZ_TOKEN_IGNORED[] = "SAS_AUTHZ_TOKEN_IGNORED";
       constexpr char const GSSUP_FAILED[] = "GSSUP_FAILED";
+      /// A Kerberos token was refused (Phase 3 K2); the record says why.
+      constexpr char const KRB_FAILED[] = "KRB_FAILED";
+      /// The Kerberos keytab or acceptor credential is unusable.
+      constexpr char const KRB_KEYTAB_REJECTED[] = "KRB_KEYTAB_REJECTED";
       constexpr char const GSSUP_LOCKED[] = "GSSUP_LOCKED";
       constexpr char const GSSUP_RATE_LIMITED[] = "GSSUP_RATE_LIMITED";
       constexpr char const GSSUP_STORE_LOADED[] = "GSSUP_STORE_LOADED";

@@ -4,36 +4,62 @@ eval '(exit $?0)' && eval 'exec perl -S $0 ${1+"$@"}'
 
 # -*- perl -*-
 #
-# Kerberos in SSLIOP (Phase 3 K1): SSLIOP built with the MPC feature
-# gssapi links MIT krb5's GSS-API, offers the Kerberos V5 mechanism and
-# turns GSS status codes into the library's text; built without it, it
-# says so.  Both builds pass.  No KDC is needed (that is K2, with the L1
-# lab).
+# Kerberos in SSLIOP (Phase 3).
+#
+# K1 (every build): SSLIOP built with the MPC feature gssapi links MIT
+# krb5's GSS-API, offers the Kerberos V5 mechanism and turns GSS status
+# codes into the library's text; built without it, it says so.
+#
+# K2 (needs the lab KDC, CORBA lab/kdc.sh up, and a gssapi build; skipped
+# otherwise): a TAO target with csiv2_kerberos accepts a Kerberos token
+# with its keytab and serves the caller as user@LAB.TEST; the reference
+# lists Kerberos first, then GSSUP; the token must be bound to the TLS
+# session (krb_channel_binding = required); a token without the binding,
+# with another session's binding, for another service, replayed or
+# carrying an expired ticket is refused with ContextError 1 and audited
+# (KRB_FAILED) with the real reason; GSSUP logins and TAO's GSSUP client
+# still work beside Kerberos; csiv2_kerberos = required offers only
+# Kerberos and refuses everything else; the keytab self-check refuses a
+# world-readable keytab in prod and RC4 keys anywhere.  The SAS test's
+# server and client (../SAS) and certificates (../Transport) are used.
+#
+# The lab is found at $ACE_TAO_KRB_LAB (default
+# ~/Projects/claude/CORBA/lab/state/kdc), its tools at $KRB5_BIN.
 
 use lib "$ENV{ACE_ROOT}/bin";
 use PerlACE::TestTarget;
 use Cwd;
+use File::Copy;
+use File::Path qw(rmtree);
+use POSIX qw(:sys_wait_h);
 
 my $test = PerlACE::TestTarget::create_target (1) || die "Create target 1 failed\n";
 my $dir = getcwd ();
+my $sas = "$dir/../SAS";
+my $certs = "$dir/../Transport";
+my $iortool = "$dir/../CSIv2_IOR/ior_tool";
+my $work = "$dir/krb_work";
+my $tool = "$ENV{TAO_ROOT}/orbsvcs/Security_Setup/ace-tao-setup";
 my $status = 0;
 
+sub slurp { my $f = shift; open (my $fh, '<', $f) || return ''; local $/; my $s = <$fh>; close ($fh); return $s; }
+sub spit { my ($f, $t) = @_; open (my $fh, '>', $f) || die "$f: $!"; print $fh $t; close ($fh); }
 sub expect {
-    my ($name, $text, $want) = @_;
-    my @miss = grep { $text !~ /$_/m } @$want;
-    if (@miss) {
-        print STDERR "ERROR: $name\n  missing: " . join ("\n  missing: ", @miss) . "\n  output:\n$text\n";
-        $status = 1;
-    } else {
-        print "ok: $name\n";
-    }
+    my ($name, $out, $must, $mustnot) = @_;
+    my @p;
+    foreach my $re (@$must) { push @p, "missing /$re/" unless $out =~ /$re/m; }
+    foreach my $re (@{$mustnot || []}) { push @p, "unexpected /$re/" if $out =~ /$re/m; }
+    if (@p) { print STDERR "ERROR: $name: " . join ('; ', @p) . "\n$out\n"; $status = 1; }
+    else { print "ok: $name\n"; }
 }
 
+# --- K1: the build ------------------------------------------------------------------
 my $out = `$dir/krb_probe 2>&1`;
 my $rc = $? >> 8;
 expect ('krb_probe reports a consistent build', "$out\nrc=$rc", ['^rc=0$']);
 expect ('the Kerberos V5 mechanism OID is 1.2.840.113554.1.2.2', $out, ['^mech_der=06092a864886f712010202$']);
-if ($out =~ /^built=1$/m) {
+my $built = $out =~ /^built=1$/m;
+if ($built) {
     expect ('built with GSS-API: the library offers Kerberos V5', $out, ['^offered=1 Kerberos V5 mechanism offered$']);
     expect ('  ... and gives GSS status text', $out, ['^status_text=\S']);
 } else {
@@ -41,4 +67,212 @@ if ($out =~ /^built=1$/m) {
             ['^offered=0 SSLIOP was built without GSS-API', '^status_text=GSS-API not built$']);
 }
 
+# --- K2: needs the lab KDC ----------------------------------------------------------
+my $lab = $ENV{'ACE_TAO_KRB_LAB'} || "$ENV{HOME}/Projects/claude/CORBA/lab/state/kdc";
+my $krb = $ENV{'KRB5_BIN'} || (-x '/opt/homebrew/opt/krb5/bin/kinit' ? '/opt/homebrew/opt/krb5/bin' : '/usr/bin');
+my $skip = !$built ? 'SSLIOP built without GSS-API'
+         : !-f "$lab/krb5.conf" || !-f "$lab/keytabs/who.keytab" || !-f "$lab/passwords/alice" ? "no Kerberos lab at $lab"
+         : !-x "$krb/kinit" ? "no kinit in $krb" : '';
+rmtree ($work);
+mkdir $work;
+$ENV{'KRB5_CONFIG'} = "$lab/krb5.conf";
+$ENV{'KRB5CCNAME'} = "FILE:$work/ccache";
+if ($skip eq '') {
+    my $k = `$krb/kinit alice\@LAB.TEST < $lab/passwords/alice 2>&1`;
+    $skip = "kinit failed (is the KDC up? CORBA lab/kdc.sh up): $k" if $? != 0;
+}
+if ($skip ne '') {
+    print "SKIPPED: Kerberos lab checks ($skip)\n";
+    rmtree ($work) if $status == 0;
+    exit $status;
+}
+delete $ENV{'ACE_TAO_SECURITY_CONF'};
+
+my $clock = -x "$dir/../Mode/mode_test" ? `$dir/../Mode/mode_test -clock` : 'synced';
+my $prod = $clock =~ /^synced/;
+print "mode: " . ($prod ? "prod" : "test (clock not synchronized)") . "\n";
+
+my $principal = 'ace-tao/who.lab.test@LAB.TEST';
+# The servers' krb5.conf: the lab's, with a 10-second clock-skew window
+# (Kerberos accepts a ticket for that long past its end time; the
+# default is 300 s), so the expired-ticket check need not wait minutes.
+(my $srvconf = slurp ("$lab/krb5.conf")) =~ s/^\[libdefaults\]\n/[libdefaults]\n    clockskew = 10\n/m;
+spit ("$work/krb5.conf", $srvconf);
+copy ("$lab/keytabs/who.keytab", "$work/who.keytab") || die "copy keytab: $!";
+chmod (0600, "$work/who.keytab");
+copy ("$lab/keytabs/who.keytab", "$work/open.keytab") || die "copy keytab: $!";
+chmod (0644, "$work/open.keytab");
+spit ("$work/pw", "wonderland\n"); chmod (0600, "$work/pw");
+spit ("$work/client.conf", "mode = test\naudit_sink = stderr\ntime_sync_wait = 0\n"); chmod (0600, "$work/client.conf");
+
+my $fp = `openssl x509 -in $certs/ca.pem -noout -fingerprint -sha256`;
+$fp =~ s/.*=//; chomp $fp;
+my ($pin) = `$tool --conf /dev/null denylist pin --signer $certs/signer_pub.pem` =~ /= (\w+)/;
+my $sign = "--key PEM:$certs/signer_key_enc.pem --password-file $certs/password.txt";
+my $acl = "$work/access.list";
+spit ($acl, "version 0\nissued 2026-01-01T00:00:00Z\n"
+          . "allow alice\@LAB.TEST /RootPOA/Who/alpha whoami\n"
+          . "allow alice\@lab.test /RootPOA/Who/alpha whoami\n"
+          . "allow * /RootPOA/Who/beta\n");
+my $o = `$tool --conf /dev/null access sign $sign --file $acl --bump 2>&1`;
+die "access sign failed:\n$o" unless $o =~ /signed into/;
+
+my $base = "mode = " . ($prod ? "prod" : "test") . "\naudit_sink = stderr\ntime_sync_wait = 0\n"
+         . "trust_anchor_sha256 = $fp\naccess_list = $acl\naccess_list_signer = $certs/signer_pub.pem\n"
+         . "access_list_signer_sha256 = $pin\naccess_default = deny\naudit_grants = on\n"
+         . "csiv2 = supported\ngssup_target = \@lab.test\ncsiv2_gssup = supported\n"
+         . "krb_principal = $principal\nkrb_rcache = file2:$work/rcache\n";
+my %conf = (krb      => $base . "csiv2_kerberos = supported\nkrb_keytab = $work/who.keytab\n",
+            loose    => $base . "csiv2_kerberos = supported\nkrb_keytab = $work/who.keytab\nkrb_channel_binding = supported\n",
+            required => $base . "csiv2_kerberos = required\nkrb_keytab = $work/who.keytab\n",
+            open     => $base . "csiv2_kerberos = supported\nkrb_keytab = $work/open.keytab\n");
+foreach my $c (keys %conf) { spit ("$work/$c.conf", $conf{$c}); chmod (0600, "$work/$c.conf"); }
+
+sub svc {
+    my ($name, $cert, $key) = @_;
+    my $opts = "-SSLAuthenticate SERVER_AND_CLIENT -SSLCAfile PEM:$certs/ca.pem"
+             . " -SSLCertificate PEM:$certs/$cert -SSLPrivateKey PEM:$certs/$key -SSLPassword file:$certs/password.txt";
+    spit ("$work/$name.svc",
+          "dynamic SSLIOP_Factory Service_Object * TAO_SSLIOP:_make_TAO_SSLIOP_Protocol_Factory() \"$opts\"\n"
+        . "static Resource_Factory \"-ORBProtocolFactory SSLIOP_Factory\"\n");
+}
+svc ('server', 'server_cert.pem', 'server_key_enc.pem');
+svc ('client', 'client_cert.pem', 'client_key_enc.pem');
+my $bind = "$certs/server_cert.pem";
+
+my ($pid, $d, $log);
+sub start_server {
+    my ($which) = @_;
+    $d = "$work/$which";
+    mkdir $d;
+    $log = "$d/server.log";
+    $pid = fork ();
+    if ($pid == 0) {
+        $ENV{'ACE_TAO_SECURITY_CONF'} = "$work/$which.conf";
+        $ENV{'KRB5_CONFIG'} = "$work/krb5.conf";
+        open (STDOUT, '>', $log); open (STDERR, '>&STDOUT');
+        exec ("$sas/server", '-ORBSvcConf', "$work/server.svc", '-ORBListenEndpoints', 'iiop://127.0.0.1:', '-d', $d);
+        exit 127;
+    }
+    for (my $i = 0; $i < 100 && !-s "$d/beta.ior"; ++$i) { select (undef, undef, undef, 0.1); }
+}
+sub stop_server {
+    my ($mode) = @_;
+    $mode = "krb5:$principal:$bind" unless defined $mode;
+    `$sas/client -ORBSvcConf $work/client.svc -k file://$d/beta.ior -c shutdown -m $mode 2>&1`;
+    my $gone = 0;
+    for (my $i = 0; $i < 50 && !$gone; ++$i) { $gone = waitpid ($pid, WNOHANG) == $pid; select (undef, undef, undef, 0.1) unless $gone; }
+    if (!$gone) { kill ('KILL', $pid); waitpid ($pid, 0); print STDERR "ERROR: server did not shut down\n"; $status = 1; }
+}
+sub call {
+    my ($what, $mode, $extra) = @_;
+    $extra = '' unless defined $extra;
+    return scalar (`$sas/client -ORBSvcConf $work/client.svc -k file://$d/alpha.ior -c $what -m $mode $extra 2>&1`);
+}
+sub log_now { select (undef, undef, undef, 0.3); return slurp ($log); }
+my @refused1 = ('^SAS REPLY error ctx=0 major=1 minor=1 ', '^whoami EXCEPTION NO_PERMISSION$');
+my @refused2 = ('^SAS REPLY error ctx=0 major=2 minor=1 ', '^whoami EXCEPTION NO_PERMISSION$');
+
+# --- csiv2_kerberos = supported, beside GSSUP ---------------------------------------------
+start_server ('krb');
+expect ('server starts with Kerberos and its keytab', slurp ($log),
+        ['SERVER READY', 'checks: \d+ ok, \d+ warn, 0 fail'], ['csiv2_kerberos']);
+my $ior = scalar (`$iortool -k file://$d/alpha.ior 2>&1`);
+expect ('the reference lists Kerberos first (mechanism OID, service principal), then GSSUP', $ior,
+        ['^    MECH 0 requires=0x[0-9a-f]+ transport=36$', '^      AS supports=0x40 requires=0x0 mech_octets=11$',
+         'target_name=.*ace-tao/who\.lab\.test\@LAB\.TEST',
+         '^    MECH 1 requires=0x[0-9a-f]+ transport=36$', '^      AS supports=0x40 requires=0x0 mech_octets=8$']);
+
+$out = call ('whoami', "krb5:$principal:$bind");
+expect ('a Kerberos login bound to the TLS session is served as alice@LAB.TEST', $out,
+        ['^SAS REPLY complete ctx=0 stateful=0$', '^SAS FINAL TOKEN \d+ octets$',
+         '^WHOAMI name=\S+alice\@LAB\.TEST authenticated=yes ']);
+expect ('  (audited: accepted by Kerberos, and the access decision sees alice@LAB.TEST)', log_now (),
+        ['reason="SAS_ACCEPTED" principal="alice\@LAB\.TEST" transport_principal="spiffe://ace-tao\.test/client".* mech="krb5"',
+         'reason="ACCESS_GRANTED" principal="alice\@LAB\.TEST"']);
+
+$out = call ('whoami', "krb5:$principal:none");
+expect ('a token without channel binding is refused (krb_channel_binding = required)', $out, [@refused1], ['^WHOAMI']);
+$out = call ('whoami', "krb5:$principal:$certs/client_cert.pem");
+expect ('a token bound to another TLS session is refused', $out, [@refused1], ['^WHOAMI']);
+$out = call ('whoami', "krb5:ace-tao/naming.lab.test\@LAB.TEST:$bind");
+expect ('a ticket for another service is refused', $out, [@refused1], ['^WHOAMI']);
+$out = call ('whoami', "krb5:$principal:$bind:$work/token");
+my $again = call ('whoami', "rawtoken:$work/token");
+expect ('a replayed token is refused', "$out\n$again", ['^WHOAMI name=\S+alice\@LAB\.TEST', @refused1]);
+$out = call ('whoami', 'notgssup');
+expect ('a malformed Kerberos token is refused', $out, [@refused1], ['^WHOAMI']);
+expect ('  (each audited as KRB_FAILED with its reason)', log_now (),
+        ['reason="KRB_FAILED" .*context_error="1"\] the token is not bound to this TLS session',
+         'reason="KRB_FAILED" .*context_error="1"\] the token is bound to another TLS session',
+         'reason="KRB_FAILED" .*context_error="1"\] .*Cannot decrypt ticket for ace-tao/naming\.lab\.test',
+         'reason="KRB_FAILED" .*context_error="1"\] replayed token']);
+
+# An expired ticket: a token made with a 5-second ticket, sent once the
+# ticket and the server's 10-second skew window have both passed.
+{
+    local $ENV{'KRB5CCNAME'} = "FILE:$work/ccache_short";
+    `$krb/kinit -l 5s alice\@LAB.TEST < $lab/passwords/alice 2>&1`;
+    call ('poke', "krb5save:$principal:$bind:$work/short_token");
+}
+sleep (17);
+$out = call ('whoami', "rawtoken:$work/short_token");
+expect ('a token whose ticket has expired is refused', $out, [@refused1], ['^WHOAMI']);
+expect ('  (audited: the ticket expired)', log_now (), ['reason="KRB_FAILED" .*context_error="1"\] .*[Ee]xpired']);
+
+$out = call ('whoami', 'gssup:alice:wonderland');
+expect ('a GSSUP login still works beside Kerberos', $out,
+        ['^SAS REPLY complete ctx=0 stateful=0$', '^WHOAMI name=\S+alice\@lab\.test authenticated=yes ']);
+$out = scalar (`ACE_TAO_SECURITY_CONF=$work/client.conf $sas/client -ORBSvcConf $work/client.svc -k file://$d/alpha.ior -c whoami -m none -g alice\@lab.test:file:$work/pw 2>&1`);
+expect ('TAO\'s own GSSUP client skips the Kerberos mechanism and logs in with GSSUP', $out,
+        ['^ACQUIRE OK$', '^SAS REPLY complete ctx=0 stateful=0$', '^WHOAMI name=\S+alice\@lab\.test authenticated=yes ']);
+stop_server ();
+expect ('no password or Kerberos secret in the log', slurp ($log), ['SAS_ACCEPTED'], ['wonderland']);
+
+# --- krb_channel_binding = supported ---------------------------------------------------
+start_server ('loose');
+expect ('krb_channel_binding = supported warns in the self-check', slurp ($log),
+        ['WARN csiv2_kerberos: krb_channel_binding = supported: Kerberos tokens not bound to the TLS session are accepted']);
+$out = call ('whoami', "krb5:$principal:none");
+expect ('  ... and serves an unbound token', $out, ['^SAS REPLY complete ', '^WHOAMI name=\S+alice\@LAB\.TEST ']);
+expect ('  ... but still refuses one bound to another session', call ('whoami', "krb5:$principal:$certs/client_cert.pem"),
+        [@refused1], ['^WHOAMI']);
+stop_server ();
+
+# --- csiv2_kerberos = required ------------------------------------------------------------
+start_server ('required');
+$ior = scalar (`$iortool -k file://$d/alpha.ior 2>&1`);
+expect ('required: the reference offers only Kerberos, as required', $ior,
+        ['^    MECH 0 requires=0x[0-9a-f]+ transport=36$', '^      AS supports=0x40 requires=0x40 mech_octets=11$'],
+        ['^    MECH 1 ']);
+expect ('required: a call with no SAS context is refused (SAS_MISSING)', call ('whoami', 'none'),
+        ['^whoami EXCEPTION NO_PERMISSION$'], ['^WHOAMI']);
+expect ('required: a GSSUP login is refused (ContextError 2)', call ('whoami', 'gssup:alice:wonderland'), [@refused2], ['^WHOAMI']);
+expect ('required: a Kerberos login is served', call ('whoami', "krb5:$principal:$bind"), ['^WHOAMI name=\S+alice\@LAB\.TEST ']);
+expect ('  (audited)', log_now (),
+        ['reason="SAS_MISSING" .*\] no SAS context; Kerberos client authentication is required',
+         'reason="SAS_INVALID_MECH" .*context_error="2"\] Kerberos client authentication is required']);
+stop_server ();
+
+# --- the keytab self-check -----------------------------------------------------------------
+my $sc = scalar (`ACE_TAO_SECURITY_CONF=$work/open.conf $sas/server -ORBSvcConf $work/server.svc -ORBListenEndpoints iiop://127.0.0.1: -d $work 2>&1 & sleep 3; kill \$! 2>/dev/null`);
+if ($prod) {
+    expect ('prod: a world-readable keytab fails the self-check', $sc,
+            ['FAIL csiv2_kerberos: Kerberos keytab unusable, every login refused: \S+open\.keytab is mode 0644', 'ORB_INIT REFUSED']);
+}
+# An RC4 key, written with ktutil (skipped where the library no longer
+# writes RC4 keys).
+`printf 'addent -password -p $principal -k 9 -e rc4-hmac\\nweak-password\\nwkt $work/rc4.keytab\\nquit\\n' | $krb/ktutil 2>&1`;
+if (-s "$work/rc4.keytab") {
+    chmod (0600, "$work/rc4.keytab");
+    spit ("$work/rc4.conf", $base . "csiv2_kerberos = supported\nkrb_keytab = $work/rc4.keytab\n");
+    chmod (0600, "$work/rc4.conf");
+    $sc = scalar (`ACE_TAO_SECURITY_CONF=$work/rc4.conf $sas/server -ORBSvcConf $work/server.svc -ORBListenEndpoints iiop://127.0.0.1: -d $work 2>&1 & sleep 3; kill \$! 2>/dev/null`);
+    expect ('a keytab with an RC4 key fails the self-check', $sc,
+            ['csiv2_kerberos: Kerberos keytab unusable, every login refused: \S+rc4\.keytab holds weak keys \(rc4-hmac']);
+} else {
+    print "SKIPPED: RC4 keytab check (ktutil wrote no RC4 key)\n";
+}
+
+rmtree ($work) if $status == 0;
 exit $status;

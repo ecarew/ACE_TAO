@@ -4,11 +4,13 @@
 #include "orbsvcs/SSLIOP/SSLIOP_Connector.h"
 #include "orbsvcs/SSLIOP/SSLIOP_ORBInitializer.h"
 #include "orbsvcs/Security/Self_Check.h"
+#include "orbsvcs/Security/Audit_Logger.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Deny_List.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Access_List.h"
 #include "orbsvcs/Security/GSSUP_Verifier.h"
 #include "orbsvcs/SSLIOP/SSLIOP_GSSUP_Store.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Asserter_List.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Kerberos.h"
 #include "tao/Security_Mode.h"
 #include "ace/OS_NS_strings.h"
 #include "ace/Read_Buffer.h"
@@ -310,6 +312,54 @@ namespace
           else
             Self_Check::contribute ("gssup_store", Self_Check::CHECK_OK, (store->path () + ": " + summary).c_str ());
         }
+
+      // Kerberos (Phase 3 R27, R31): needs a GSS-API build, a service
+      // principal and a keytab that holds AES keys for it, owner-only in
+      // prod.  At most one login mechanism may be required.
+      {
+        std::string const krb = host.get ("csiv2_kerberos", "off");
+        std::string const principal = host.get ("krb_principal");
+        std::string const keytab = host.get ("krb_keytab");
+        std::string const binding = host.get ("krb_channel_binding", "required");
+        std::string const csiv2_now = host.get ("csiv2", host.mode == TAO_Security_Mode::MODE_PROD ? "supported" : "off");
+        if (krb != "off" && krb != "supported" && krb != "required")
+          Self_Check::contribute ("csiv2_kerberos", bad, ("csiv2_kerberos must be off, supported or required, not " + krb).c_str ());
+        else if (krb != "off" && csiv2_now == "off")
+          Self_Check::contribute ("csiv2_kerberos", bad, "csiv2_kerberos is on but csiv2 is off");
+        else if (krb != "off" && !TAO::SSLIOP::Kerberos::built ())
+          Self_Check::contribute ("csiv2_kerberos", bad,
+                                  "csiv2_kerberos is on but SSLIOP was built without GSS-API (MPC feature gssapi)");
+        else if (krb != "off" && (principal.empty () || keytab.empty ()))
+          Self_Check::contribute ("csiv2_kerberos", bad, "csiv2_kerberos is on but krb_principal or krb_keytab is not set");
+        else if (krb == "required" && gssup == "required")
+          Self_Check::contribute ("csiv2_kerberos", bad, "csiv2_kerberos and csiv2_gssup cannot both be required");
+        else if (krb != "off" && binding != "off" && binding != "supported" && binding != "required")
+          Self_Check::contribute ("csiv2_kerberos", bad,
+                                  ("krb_channel_binding must be off, supported or required, not " + binding).c_str ());
+        else if (krb != "off")
+          {
+            std::string summary;
+            std::string error;
+            if (!TAO::SSLIOP::Kerberos::check_keytab (keytab, principal,
+                                                      host.mode == TAO_Security_Mode::MODE_PROD, summary, error))
+              {
+                TAO::Security::Audit_Logger::instance ()->write (
+                  TAO::Security::Audit_Record ("config", false, TAO::Security::Audit_Reason::KRB_KEYTAB_REJECTED)
+                    .field ("file", keytab)
+                    .text (error.c_str ()));
+                Self_Check::contribute ("csiv2_kerberos", bad, ("Kerberos keytab unusable, every login refused: " + error).c_str ());
+              }
+            else
+              {
+                Self_Check::contribute ("csiv2_kerberos", Self_Check::CHECK_OK,
+                                        ("Kerberos " + krb + ", " + summary + ", channel binding " + binding).c_str ());
+                if (binding != "required")
+                  Self_Check::contribute ("csiv2_kerberos", Self_Check::CHECK_WARN,
+                                          ("krb_channel_binding = " + binding
+                                           + ": Kerberos tokens not bound to the TLS session are accepted").c_str ());
+              }
+          }
+      }
 
       // Identity assertion (R22): the asserter list must be signed by the
       // pinned signer in prod; presumed trust is never offered.
