@@ -835,6 +835,8 @@ SAS_Target::process (PortableInterceptor::ServerRequestInfo_ptr ri,
         }
       caller.authenticated = quote_scoped (name) + c.target;
       caller.authenticated_mech = "gssup";
+      // Store groups for the role map's group:NAME lines (Phase 3 T3).
+      caller.login_groups = v->groups (name);
       mech_name = "gssup";
     }
   else if (c.gssup == 2)
@@ -868,6 +870,13 @@ SAS_Target::process (PortableInterceptor::ServerRequestInfo_ptr ri,
         .field ("src", caller.source)
         .field ("op", operation == nullptr ? "" : operation)
         .field ("mech", mech_name);
+      if (!caller.login_groups.empty ())
+        {
+          std::string list;
+          for (std::string const &g : caller.login_groups)
+            list += (list.empty () ? "" : ",") + g;
+          rec.field ("login_groups", list);
+        }
       if (pac.present)
         {
           // Ticket groups (K4): the first 64, then how many more.

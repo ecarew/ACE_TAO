@@ -95,6 +95,11 @@ namespace TAO
       std::vector<std::string> groups;
       std::string groups_authority;
 
+      /// Groups the GSSUP verifier gives @c authenticated (the store
+      /// line's groups=, Phase 3 T3).  Like @c groups, they belong to
+      /// the authenticated login, never to an asserted caller.
+      std::vector<std::string> login_groups;
+
       /// The peer's address, "host:port".
       std::string source;
 

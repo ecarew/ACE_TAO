@@ -291,8 +291,19 @@ TAO::SSLIOP::Server_Invocation_Interceptor::receive_request (
                                 rd.listed ? (rd.required.any ? "any:" : "") + TAO::SSLIOP::Role_Model::rights_text (rd.required.rights)
                                           : std::string ("(unlisted)"))
                         .field ("domain", rd.domain)
-                        .field ("tables", versions)
-                        .text (rd.why.c_str ());
+                        .field ("tables", versions);
+                      // T3: which role-map lines gave the roles, and what
+                      // an asserter's cap took away (R36).
+                      std::string from, capped;
+                      for (std::string const &s : rd.sources)
+                        from += (from.empty () ? "" : ";") + s;
+                      for (std::string const &s : rd.capped)
+                        capped += (capped.empty () ? "" : ",") + s;
+                      if (!from.empty ())
+                        rec.field ("roles_from", from);
+                      if (!capped.empty ())
+                        rec.field ("roles_capped", capped);
+                      rec.text (rd.why.c_str ());
                     }
                 }
               else

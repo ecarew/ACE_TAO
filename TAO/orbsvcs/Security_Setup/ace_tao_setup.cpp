@@ -94,9 +94,9 @@ namespace
     "  cert request --key SPEC --token-file F --out PEM ... | cert renew --key SPEC --cert PEM ...\n"
     "  denylist add|remove|sign|check|pin ...\n"
     "  access sign|check|test ...\n"
-    "  user add|passwd|lock|unlock|remove|list ...\n"
+    "  user add|passwd|lock|unlock|remove|groups|list ...\n"
     "  asserters sign|check ...\n"
-    "  rights|grants|roles sign|check ...   (the role model's signed policy tables)\n"
+    "  rights|grants|roles sign|check ..., roles test|import ...   (the role model)\n"
     "  (key, cert, denylist, access, asserters, user, rights, grants or roles alone prints their options)\n"
     "  (check --gate exits 2 only on failures, 0 otherwise)\n";
 

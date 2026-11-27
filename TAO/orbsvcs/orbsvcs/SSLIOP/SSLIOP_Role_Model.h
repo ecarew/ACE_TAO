@@ -42,13 +42,44 @@
  *    grant ns-admin  get,set,manage,use
  *  @endcode
  *
- *  Role map (table roles, R35): principals to roles.  T2 reads
- *  "role PRINCIPAL ROLE[,ROLE...]" lines; T3 adds groups and conditions.
+ *  Role map (table roles, R35 to R37): who holds which roles.
  *
  *  @code
  *    role spiffe://ace-tao.test/portal      reader
  *    role alice@lab.test                    publisher
+ *    role CN=legacy gateway,O=Example       reader
+ *    group operators bob@lab.test
+ *    group operators spiffe://ace-tao.test/ops-console
+ *    role group:operators                   ns-admin  factors=tls+gssup
+ *    role sid:S-1-5-21-1-2-3-1105           ns-admin
+ *    sid  S-1-5-21-1-2-3-1105               AD.LAB.TEST\ns-admins
+ *    role carol@lab.test                    publisher via=spiffe://ace-tao.test/portal
+ *    role anonymous                         reader
  *  @endcode
+ *
+ *  "role WHO ROLE[,ROLE...] [via=ASSERTER] [factors=tls+gssup]": WHO is a
+ *  principal (a SPIFFE ID, a certificate subject DN, user@realm or a
+ *  Kerberos principal; a DN may hold blanks), "group:NAME", "sid:SID" or
+ *  "anonymous".  The roles are the last word before the options.
+ *
+ *  - group:NAME matches a member named by "group NAME PRINCIPAL" lines
+ *    (one member a line, the principal is the rest of the line), or a
+ *    caller whose own GSSUP login has NAME in its store line's groups=.
+ *  - sid:SID matches an AD group SID from the caller's verified Kerberos
+ *    ticket (R30).  "sid SID NAME..." gives it a readable name for audit
+ *    records and "roles test" (Q4).
+ *  - anonymous matches only a caller with no identity (no certificate
+ *    and no login), or an asserted anonymous caller (R37); no other line
+ *    gives such a caller roles.
+ *  - via=ASSERTER: only when ASSERTER asserted the caller's identity (via=*
+ *    any listed asserter).  A line without via= also matches an asserted
+ *    caller of that name; asserter caps (R36) bound what it can reach.
+ *  - factors=tls+gssup: only when the caller itself proved a certificate
+ *    and a GSSUP password on this request (never an asserted caller).
+ *
+ *  An asserted caller is matched by its asserted name only, and through
+ *  role-map groups only: the ticket groups and store groups on the
+ *  request belong to its asserter.  The certificate OU is never a role.
  */
 //=============================================================================
 
@@ -137,10 +168,24 @@ namespace TAO
         std::map<std::string, std::map<std::string, unsigned>> poas;
       };
 
+      /// One "role" line.
+      struct Role_Line
+      {
+        std::set<std::string> roles;
+        std::string via;          ///< asserter required ("*": any); empty: none
+        bool two_factor = false;  ///< factors=tls+gssup
+        unsigned line = 0;
+      };
+
       struct Role_Map
       {
         long version = 0;
-        std::map<std::string, std::set<std::string>> by_principal;
+        /// Principal, "group:NAME", "sid:SID" or "anonymous" -> its lines.
+        std::map<std::string, std::vector<Role_Line>> by_key;
+        /// Role-map group -> members.
+        std::map<std::string, std::set<std::string>> members;
+        /// SID -> readable name.
+        std::map<std::string, std::string> sid_names;
       };
 
       /**
@@ -163,6 +208,11 @@ namespace TAO
         bool allowed = false;
         std::string why;              ///< one line for the record
         std::set<std::string> roles;  ///< roles held
+        /// What gave them: the role-map keys matched ("group:operators",
+        /// "sid:S-1-...(AD.LAB.TEST\ns-admins)", "anonymous", a principal).
+        std::vector<std::string> sources;
+        /// Roles the asserter's cap removed (R36).
+        std::set<std::string> capped;
         Requirement required;
         bool listed = false;          ///< a rights line (or the built-in default) covers the operation
         std::string domain;           ///< "service" or the POA domain
@@ -174,7 +224,8 @@ namespace TAO
        * target's most-derived repository ID; @a object_path is "/" + POA
        * names + "/" + object id.  An operation no line covers is allowed
        * only when @a unlisted_allowed (test mode with access_default =
-       * allow); prod passes false.
+       * allow); prod passes false.  @a cap, for an asserted caller whose
+       * asserter-list entry has roles=, is the roles it may reach (R36).
        */
       TAO_SSLIOP_Export Decision decide (Rights_Table const &rights,
                                          Grants_Table const &grants,
@@ -183,7 +234,16 @@ namespace TAO
                                          std::string const &interface_id,
                                          std::string const &object_path,
                                          std::string const &operation,
-                                         bool unlisted_allowed);
+                                         bool unlisted_allowed,
+                                         std::set<std::string> const *cap = nullptr);
+
+      /**
+       * The caller's roles from the role map alone (R35 to R37), with the
+       * keys that gave them in @a sources.
+       */
+      TAO_SSLIOP_Export std::set<std::string> roles_of (Role_Map const &roles,
+                                                        TAO::Security::Caller const &caller,
+                                                        std::vector<std::string> *sources = nullptr);
 
       /**
        * @class Engine

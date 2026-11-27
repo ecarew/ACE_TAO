@@ -26,6 +26,7 @@
 #include "tao/Versioned_Namespace.h"
 
 #include <string>
+#include <vector>
 
 TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -61,6 +62,12 @@ namespace TAO
                              std::string const &target,
                              std::string const &source,
                              std::string &detail) = 0;
+
+      /**
+       * The groups of @a user, asked once verify() has accepted it (the
+       * role map's group:NAME lines, Phase 3 T3).  The default has none.
+       */
+      virtual std::vector<std::string> groups (std::string const &user);
 
       /// Installs the process-wide verifier (not owned; null removes it).
       static void install (GSSUP_Verifier *verifier);

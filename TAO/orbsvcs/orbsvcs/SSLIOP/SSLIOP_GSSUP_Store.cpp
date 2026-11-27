@@ -17,6 +17,8 @@
 #include <openssl/params.h>
 #include <openssl/rand.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <sstream>
 
@@ -190,6 +192,17 @@ namespace
 }
 
 bool
+Store::valid_group (std::string const &group)
+{
+  if (group.empty () || group.size () > 64 || !::isalpha (static_cast<unsigned char> (group[0])))
+    return false;
+  for (char c : group)
+    if (!::isalnum (static_cast<unsigned char> (c)) && c != '-' && c != '_' && c != '.')
+      return false;
+  return true;
+}
+
+bool
 Store::valid_user (std::string const &user)
 {
   if (user.empty () || user.size () > 64)
@@ -218,12 +231,12 @@ Store::parse (std::string const &text, std::vector<Entry> &out, std::string &err
       if (line.empty () || line[0] == '#')
         continue;
       std::istringstream fields (line);
-      std::string user, cred, state, extra;
-      fields >> user >> cred >> state;
+      std::string user, cred, state, opt, extra;
+      fields >> user >> cred >> state >> opt;
       std::string const where = "line " + std::to_string (line_no) + ": ";
-      if (state.empty () || (fields >> extra))
+      if (state.empty () || (fields >> extra) || (!opt.empty () && opt.compare (0, 7, "groups=") != 0))
         {
-          error = where + "want USER scrypt:LOG2N:R:P:SALT:HASH active|locked";
+          error = where + "want USER scrypt:LOG2N:R:P:SALT:HASH active|locked [groups=G[,G...]]";
           return false;
         }
       if (!valid_user (user))
@@ -248,6 +261,19 @@ Store::parse (std::string const &text, std::vector<Entry> &out, std::string &err
           error = where + "state must be active or locked";
           return false;
         }
+      if (!opt.empty ())
+        {
+          for (std::string const &g : split (opt.substr (7), ','))
+            {
+              if (!valid_group (g))
+                {
+                  error = where + "bad group name \"" + g + "\"";
+                  return false;
+                }
+              if (std::find (e.groups.begin (), e.groups.end (), g) == e.groups.end ())
+                e.groups.push_back (g);
+            }
+        }
       for (Entry const &o : out)
         if (o.user == user)
           {
@@ -263,10 +289,15 @@ std::string
 Store::format (std::vector<Entry> const &entries)
 {
   std::string s = "# ace-tao GSSUP password store; maintained by \"ace-tao-setup user\".\n"
-                  "# USER scrypt:LOG2N:R:P:SALT:HASH active|locked\n";
+                  "# USER scrypt:LOG2N:R:P:SALT:HASH active|locked [groups=G[,G...]]\n";
   for (Entry const &e : entries)
-    s += e.user + " scrypt:" + std::to_string (e.params.log2n) + ":" + std::to_string (e.params.r) + ":"
-         + std::to_string (e.params.p) + ":" + b64 (e.salt) + ":" + b64 (e.hash) + (e.locked ? " locked\n" : " active\n");
+    {
+      s += e.user + " scrypt:" + std::to_string (e.params.log2n) + ":" + std::to_string (e.params.r) + ":"
+           + std::to_string (e.params.p) + ":" + b64 (e.salt) + ":" + b64 (e.hash) + (e.locked ? " locked" : " active");
+      for (size_t i = 0; i < e.groups.size (); ++i)
+        s += (i == 0 ? " groups=" : ",") + e.groups[i];
+      s += "\n";
+    }
   return s;
 }
 
@@ -545,6 +576,16 @@ Store::verify (std::string const &user, std::string const &password, std::string
     }
   detail = !known ? "unknown user" : entry.locked ? "user locked by an administrator" : "wrong password";
   return REJECTED;
+}
+
+std::vector<std::string>
+Store::groups (std::string const &user)
+{
+  ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, guard, this->lock_, std::vector<std::string> ());
+  if (!this->users_)
+    return std::vector<std::string> ();
+  auto const e = this->users_->find (user);
+  return e != this->users_->end () ? e->second.groups : std::vector<std::string> ();
 }
 
 TAO_END_VERSIONED_NAMESPACE_DECL

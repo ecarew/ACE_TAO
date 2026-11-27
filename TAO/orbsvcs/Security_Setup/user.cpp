@@ -8,6 +8,7 @@
 //   user lock   USER [--store F]
 //   user unlock USER [--store F]
 //   user remove USER [--store F]
+//   user groups USER --set G[,G...] | --clear [--store F]
 //   user list        [--store F]
 //
 // The store defaults to gssup_store in the security configuration.  A
@@ -16,8 +17,9 @@
 // command line.  Passwords under 12 characters are refused.  The store
 // is rewritten through a temporary file (mode 0600, the owner of the
 // file it replaces, or --owner for a new one) and renamed into place;
-// services pick the change up on their next login.  list prints names,
-// states and scrypt costs, never hashes.
+// services pick the change up on their next login.  groups sets the
+// user's groups= (the role map's group:NAME lines, Phase 3 T3).  list
+// prints names, states, groups and scrypt costs, never hashes.
 
 #include "keys.h"
 
@@ -58,6 +60,7 @@ namespace
     "usage: ace-tao-setup user add    USER [--store F] [--password-stdin] [--cost LOG2N] [--owner ACCOUNT]\n"
     "       ace-tao-setup user passwd USER [--store F] [--password-stdin] [--cost LOG2N]\n"
     "       ace-tao-setup user lock|unlock|remove USER [--store F]\n"
+    "       ace-tao-setup user groups USER --set G[,G...] | --clear [--store F]\n"
     "       ace-tao-setup user list [--store F]\n"
     "  F defaults to gssup_store in the security configuration.  Passwords come from the\n"
     "  terminal (asked twice, not echoed) or, with --password-stdin, one line of standard\n"
@@ -92,6 +95,9 @@ namespace
     std::string user, store, owner;
     bool password_stdin = false;
     unsigned cost = 0;
+    std::string groups;
+    bool set_groups = false;
+    bool clear_groups = false;
   };
 
   int
@@ -105,6 +111,8 @@ namespace
         else if (a == "--owner" && more) o.owner = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
         else if (a == "--cost" && more) o.cost = static_cast<unsigned> (ACE_OS::atoi (ACE_TEXT_ALWAYS_CHAR (argv[++i])));
         else if (a == "--password-stdin") o.password_stdin = true;
+        else if (a == "--set" && more && cmd == "groups") { o.groups = ACE_TEXT_ALWAYS_CHAR (argv[++i]); o.set_groups = true; }
+        else if (a == "--clear" && cmd == "groups") o.clear_groups = true;
         else if (a == "--password" || a.compare (0, 11, "--password=") == 0)
           return usage ("user " + cmd + ": passwords are never taken from the command line");
         else if (wants_user && o.user.empty () && !a.empty () && a[0] != '-') o.user = a;
@@ -343,6 +351,7 @@ namespace
     if (existing != nullptr)
       {
         e.locked = existing->locked;
+        e.groups = existing->groups;
         *existing = e;
       }
     else
@@ -382,6 +391,49 @@ namespace
   }
 
   int
+  cmd_groups (int argc, ACE_TCHAR *argv[])
+  {
+    Options o;
+    if (int const r = parse (argc, argv, o, "groups", true))
+      return r;
+    if (o.set_groups == o.clear_groups)
+      return usage ("user groups: give --set G[,G...] or --clear");
+    std::vector<std::string> groups;
+    if (o.set_groups)
+      {
+        size_t p = 0;
+        for (;;)
+          {
+            size_t const c = o.groups.find (',', p);
+            std::string const g = o.groups.substr (p, c == std::string::npos ? std::string::npos : c - p);
+            if (!GSSUP_Store::valid_group (g))
+              return usage ("user groups: bad group name \"" + g + "\" (a letter, then letters, digits, - _ .)");
+            bool dup = false;
+            for (std::string const &h : groups)
+              dup = dup || h == g;
+            if (!dup)
+              groups.push_back (g);
+            if (c == std::string::npos)
+              break;
+            p = c + 1;
+          }
+      }
+    std::vector<GSSUP_Store::Entry> entries;
+    std::string error;
+    if (!load (o.store, false, entries, error))
+      return refuse (error);
+    GSSUP_Store::Entry *const e = find (entries, o.user);
+    if (e == nullptr)
+      return refuse ("no user " + o.user + " in " + o.store);
+    e->groups = groups;
+    if (!save (o.store, entries, std::string (), error))
+      return refuse (error);
+    ACE_OS::printf ("%s %s in %s%s%s\n", groups.empty () ? "Cleared the groups of" : "Set the groups of", o.user.c_str (),
+                    o.store.c_str (), groups.empty () ? "" : ": ", o.set_groups ? o.groups.c_str () : "");
+    return changed ("groups", o);
+  }
+
+  int
   cmd_list (int argc, ACE_TCHAR *argv[])
   {
     Options o;
@@ -395,8 +447,13 @@ namespace
     if (!GSSUP_Store::check_file (o.store, true, error))
       ACE_OS::fprintf (stderr, "ace-tao-setup: %s: %s\n", prod ? "error" : "warning (refused in prod)", error.c_str ());
     for (GSSUP_Store::Entry const &e : entries)
-      ACE_OS::printf ("%-24s %-6s scrypt N=2^%u r=%u p=%u\n", e.user.c_str (), e.locked ? "locked" : "active",
-                      e.params.log2n, e.params.r, e.params.p);
+      {
+        std::string groups;
+        for (std::string const &g : e.groups)
+          groups += (groups.empty () ? " groups=" : ",") + g;
+        ACE_OS::printf ("%-24s %-6s scrypt N=2^%u r=%u p=%u%s\n", e.user.c_str (), e.locked ? "locked" : "active",
+                        e.params.log2n, e.params.r, e.params.p, groups.c_str ());
+      }
     ACE_OS::printf ("%u user(s) in %s\n", static_cast<unsigned> (entries.size ()), o.store.c_str ());
     return EXIT_OK;
   }
@@ -406,7 +463,7 @@ int
 setup_user (int argc, ACE_TCHAR *argv[])
 {
   if (argc < 1)
-    return usage ("user: give add, passwd, lock, unlock, remove or list");
+    return usage ("user: give add, passwd, lock, unlock, remove, groups or list");
   std::string const sub = ACE_TEXT_ALWAYS_CHAR (argv[0]);
   if (sub == "add")
     return cmd_set_password (argc - 1, argv + 1, true);
@@ -414,6 +471,8 @@ setup_user (int argc, ACE_TCHAR *argv[])
     return cmd_set_password (argc - 1, argv + 1, false);
   if (sub == "lock" || sub == "unlock" || sub == "remove")
     return cmd_state (argc - 1, argv + 1, sub == "lock" ? "lock" : sub == "unlock" ? "unlock" : "remove");
+  if (sub == "groups")
+    return cmd_groups (argc - 1, argv + 1);
   if (sub == "list")
     return cmd_list (argc - 1, argv + 1);
   return usage ("user: unknown subcommand " + sub);

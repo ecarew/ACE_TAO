@@ -154,6 +154,25 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
   first TLS credential of such a policy's list rather than only the
   first entry. New test orbsvcs/tests/Security/SAS_Client.
 
+. The full role map (Phase 3 T3). A role line names a principal (a
+  subject DN may now hold blanks), group:NAME, sid:SID or anonymous, and
+  may carry via=ASSERTER (only when that asserter asserted the caller) or
+  factors=tls+gssup (only when the caller itself proved a certificate and
+  a GSSUP password). group:NAME matches members listed by "group NAME
+  PRINCIPAL" lines, or a GSSUP login whose store line has NAME in its new
+  groups= field (ace-tao-setup user groups USER --set G,... | --clear);
+  sid:SID matches an AD group SID from a verified Kerberos ticket, and
+  "sid SID NAME" gives it a readable name for audit records. Ticket and
+  store groups belong to the login on the request, never to a caller it
+  asserts. A caller with no identity gets roles only from an "anonymous"
+  line. An asserter-list entry may cap the roles its asserted callers can
+  reach with roles=. Authz audit records add roles_from and
+  roles_capped; SAS_ACCEPTED adds login_groups. GSSUP_Verifier has a new
+  virtual groups (user), empty by default. ace-tao-setup roles test
+  takes --cert, --groups, --sids, --asserted/--via/--cap and --anonymous,
+  and the new ace-tao-setup roles import drafts a role map from an
+  interim access list.
+
 . Role-based access decisions (Phase 3 T2). With roles_dir set, SSLIOP
   decides each request from the three signed tables instead of the
   interim access list: the rights table names the Security Service

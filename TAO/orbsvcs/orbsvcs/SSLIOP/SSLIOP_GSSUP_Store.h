@@ -13,6 +13,7 @@
  *    # comments and blank lines are ignored
  *    alice scrypt:15:8:1:SALT:HASH active
  *    bob   scrypt:15:8:1:SALT:HASH locked
+ *    carol scrypt:15:8:1:SALT:HASH active groups=operators,auditors
  *  @endcode
  *
  *  scrypt:LOG2N:R:P:SALT:HASH gives the scrypt parameters (N = 2^LOG2N),
@@ -20,7 +21,8 @@
  *  user name is 1 to 64 of A-Z a-z 0-9 . _ - (no "@": the realm is the
  *  service's gssup_target).  "locked" is an administrator's lock.  The
  *  file is maintained with "ace-tao-setup user"; it is re-read when it
- *  changes.  In prod it must be mode 0600 (or 0400) and owned by the
+ *  changes.  groups= names the user's groups for the role map's
+ *  group:NAME lines (Phase 3 T3; group names as role names).  In prod it must be mode 0600 (or 0400) and owned by the
  *  service's user, or it is refused.  A store that cannot be read or
  *  parsed refuses every login (fail closed); the reason is audited.
  *
@@ -90,7 +92,12 @@ namespace TAO
         std::string salt;   ///< raw bytes
         std::string hash;   ///< raw bytes
         bool locked = false;
+        std::vector<std::string> groups;  ///< groups= (Phase 3 T3)
       };
+
+      /// True for a group name (as a role name: a letter, then letters,
+      /// digits, '-', '_', '.'; at most 64).
+      static bool valid_group (std::string const &group);
 
       /// True for a name the store accepts (see the file format above).
       static bool valid_user (std::string const &user);
@@ -137,6 +144,9 @@ namespace TAO
                      std::string const &target,
                      std::string const &source,
                      std::string &detail) override;
+
+      /// The store line's groups= for @a user (none if unknown).
+      std::vector<std::string> groups (std::string const &user) override;
 
       /// Forgets every failure and lock (tests).
       void reset_limits ();

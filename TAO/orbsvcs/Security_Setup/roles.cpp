@@ -4,7 +4,10 @@
 //
 //   KIND sign  --key SPEC [--password-file F] --file DRAFT [--dir DIR]
 //   KIND check [--dir DIR] [--signer PEM]
-//   KIND test  --principal P --interface ID --op OP [--object PATH] [--dir DIR] [--signer PEM]
+//   roles test --principal P --interface ID --op OP [--object PATH] [--dir DIR] [--signer PEM]
+//              [--cert NAME] [--groups G,...] [--sids SID,...]
+//              [--asserted NAME --via ASSERTER [--cap ROLE,...]] [--anonymous]
+//   roles import [--access LIST] [--out DRAFT]
 //
 // KIND is rights, grants or roles.  sign takes a hand-edited DRAFT (its
 // body; any table, version or issued lines in it are replaced), gives it
@@ -19,10 +22,24 @@
 // tables as a service would and says whether principal P may call OP on
 // an object of interface ID (repository ID) at PATH, and why, with prod's
 // rules (exit 0 allowed, 2 refused).  The interim access list's explicit
-// denies, which a service checks first, are not consulted.
+// denies, which a service checks first, are not consulted.  P is a SPIFFE
+// ID or subject DN (a certificate) or user@realm (a login); --cert adds
+// the certificate a login came over (for factors=tls+gssup), --groups the
+// login's store groups, --sids its ticket's group SIDs.  --asserted makes
+// NAME the caller, asserted by --via (P is then the asserter), and --cap
+// is that asserter's roles= from the asserter list.  --anonymous asks
+// about a caller with no identity.
+//
+// import drafts a role map from the interim access list (LIST defaults to
+// access_list; the draft goes to stdout or DRAFT): one role for each
+// distinct set of allow rules, a role line for each principal, with
+// via= kept, and comments listing the rules each role stands for.  The
+// draft still needs review and grants for its roles; deny rules and
+// "allow *" rules are listed as not imported.
 
 #include "keys.h"
 
+#include "orbsvcs/SSLIOP/SSLIOP_Access_List.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Deny_List.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Policy_Tables.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Role_Model.h"
@@ -37,7 +54,10 @@
 
 #include <openssl/evp.h>
 
+#include <map>
 #include <memory>
+#include <set>
+#include <sstream>
 
 using TAO::SSLIOP::Deny_List;
 using TAO::SSLIOP::Policy_Tables;
@@ -54,6 +74,9 @@ namespace
     "usage: ace-tao-setup rights|grants|roles sign  --key SPEC [--password-file F] --file DRAFT [--dir DIR]\n"
     "       ace-tao-setup rights|grants|roles check [--dir DIR] [--signer PEM]\n"
     "       ace-tao-setup roles test --principal P --interface ID --op OP [--object PATH] [--dir DIR]\n"
+    "            [--cert NAME] [--groups G,...] [--sids SID,...]\n"
+    "            [--asserted NAME --via ASSERTER [--cap ROLE,...]] [--anonymous]\n"
+    "       ace-tao-setup roles import [--access LIST] [--out DRAFT]\n"
     "  sign gives DRAFT the next version and today's date and writes DIR/KIND-YYYY-MM-DD[.N].txt\n"
     "  with its .sig; check shows which file a service would load.  DIR defaults to roles_dir,\n"
     "  PEM to roles_signer; the key must match roles_signer_sha256.\n";
@@ -89,7 +112,21 @@ namespace
   {
     std::string file, key, password_file, signer, dir;
     std::string principal, interface_id, op, object;
+    std::string cert, groups, sids, asserted, via, cap, access, out;
+    bool has_cap = false;
+    bool anonymous = false;
   };
+
+  std::vector<std::string>
+  split_list (std::string const &s)
+  {
+    std::vector<std::string> out;
+    std::istringstream in (s);
+    for (std::string item; std::getline (in, item, ','); )
+      if (!item.empty ())
+        out.push_back (item);
+    return out;
+  }
 
   int
   parse (int argc, ACE_TCHAR *argv[], Options &o, std::string const &what)
@@ -107,6 +144,15 @@ namespace
         else if (a == "--interface" && more) o.interface_id = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
         else if (a == "--op" && more) o.op = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
         else if (a == "--object" && more) o.object = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
+        else if (a == "--cert" && more) o.cert = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
+        else if (a == "--groups" && more) o.groups = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
+        else if (a == "--sids" && more) o.sids = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
+        else if (a == "--asserted" && more) o.asserted = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
+        else if (a == "--via" && more) o.via = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
+        else if (a == "--cap" && more) { o.cap = ACE_TEXT_ALWAYS_CHAR (argv[++i]); o.has_cap = true; }
+        else if (a == "--access" && more) o.access = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
+        else if (a == "--out" && more) o.out = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
+        else if (a == "--anonymous") o.anonymous = true;
         else
           return usage (what + ": unknown option " + a);
       }
@@ -275,8 +321,14 @@ namespace
     Options o;
     if (int const rc = parse (argc, argv, o, "roles test"))
       return rc;
-    if (o.principal.empty () || o.interface_id.empty () || o.op.empty ())
-      return usage ("roles test: --principal, --interface and --op are required");
+    if ((o.principal.empty () && !o.anonymous) || o.interface_id.empty () || o.op.empty ())
+      return usage ("roles test: --principal (or --anonymous), --interface and --op are required");
+    if (o.anonymous && (!o.principal.empty () || !o.asserted.empty ()))
+      return usage ("roles test: --anonymous takes no --principal or --asserted");
+    if (!o.asserted.empty () && o.via.empty ())
+      return usage ("roles test: --asserted needs --via (the asserter)");
+    if (o.has_cap && o.asserted.empty ())
+      return usage ("roles test: --cap applies to an asserted caller (--asserted)");
     if (o.dir.empty () || o.signer.empty ())
       return refuse ("roles test: --dir and --signer are required (or roles_dir and roles_signer)");
     if (o.object.empty ())
@@ -304,27 +356,152 @@ namespace
     if (!RM::parse (t[0], rights, error) || !RM::parse (t[1], grants, error) || !RM::parse (t[2], roles, error))
       return refuse (error);
 
-    // The principal as a service would see it: a SPIFFE ID, a certificate
-    // subject, or an authenticated user@realm.
+    // The caller as a service would see it: a certificate (SPIFFE ID or
+    // subject), a login (user@realm, GSSUP or Kerberos) perhaps over a
+    // certificate, perhaps asserting another caller.
     TAO::Security::Caller caller;
-    if (o.principal.compare (0, 9, "spiffe://") == 0)
-      caller.spiffe_ids.push_back (o.principal);
-    else if (o.principal.find ('=') != std::string::npos)
-      caller.subject = o.principal;
-    else
-      caller.authenticated = o.principal;
-    RM::Decision const d = RM::decide (rights, grants, roles, caller, o.interface_id, o.object, o.op, false);
-    std::string held;
+    auto set_cert = [&caller] (std::string const &n)
+    {
+      if (n.compare (0, 9, "spiffe://") == 0)
+        caller.spiffe_ids.push_back (n);
+      else
+        caller.subject = n;
+    };
+    if (!o.principal.empty ())
+      {
+        if (o.principal.compare (0, 9, "spiffe://") == 0 || o.principal.find ('=') != std::string::npos)
+          set_cert (o.principal);
+        else
+          {
+            caller.authenticated = o.principal;
+            caller.authenticated_mech = "gssup";
+          }
+      }
+    if (!o.cert.empty ())
+      set_cert (o.cert);
+    caller.login_groups = split_list (o.groups);
+    caller.groups = split_list (o.sids);
+    if (!o.asserted.empty ())
+      {
+        caller.asserted = o.asserted;
+        caller.asserter = o.via;
+      }
+    std::set<std::string> cap;
+    for (std::string const &r : split_list (o.cap))
+      cap.insert (r);
+    RM::Decision const d = RM::decide (rights, grants, roles, caller, o.interface_id, o.object, o.op, false,
+                                       o.has_cap ? &cap : nullptr);
+    std::string held, from, capped;
     for (std::string const &role : d.roles)
       held += (held.empty () ? "" : ",") + role;
-    ACE_OS::printf ("%s: %s %s on %s (%s)\n", d.allowed ? "ALLOWED" : "REFUSED", o.principal.c_str (), o.op.c_str (),
+    for (std::string const &f : d.sources)
+      from += (from.empty () ? "" : "; ") + f;
+    for (std::string const &c : d.capped)
+      capped += (capped.empty () ? "" : ",") + c;
+    std::string const who = o.anonymous ? std::string ("anonymous") : caller.effective ();
+    ACE_OS::printf ("%s: %s %s on %s (%s)\n", d.allowed ? "ALLOWED" : "REFUSED", who.c_str (), o.op.c_str (),
                     o.object.c_str (), o.interface_id.c_str ());
+    if (!from.empty ())
+      ACE_OS::printf ("  roles from: %s\n", from.c_str ());
+    if (!capped.empty ())
+      ACE_OS::printf ("  removed by the asserter's cap: %s\n", capped.c_str ());
     ACE_OS::printf ("  roles %s; requires %s; %s domain; %s\n", held.empty () ? "(none)" : held.c_str (),
                     d.listed ? ((d.required.any ? "any of " : "") + RM::rights_text (d.required.rights)).c_str ()
                              : "(not listed)",
                     d.domain.c_str (), d.why.c_str ());
     ACE_OS::printf ("  tables: %s\n", versions.c_str ());
     return d.allowed ? EXIT_OK : EXIT_FAIL;
+  }
+
+  /// One access-list rule as text (for the draft's comments).
+  std::string
+  rule_text (TAO::SSLIOP::Access_List::Rule const &r)
+  {
+    std::string t = r.object.empty () && r.prefix ? std::string ("*") : r.object + (r.prefix ? "*" : "");
+    if (r.operations.empty ())
+      t += " (all operations)";
+    for (std::string const &op : r.operations)
+      t += " " + op;
+    return t;
+  }
+
+  int
+  cmd_import (int argc, ACE_TCHAR *argv[])
+  {
+    using TAO::SSLIOP::Access_List;
+    Options o;
+    if (int const rc = parse (argc, argv, o, "roles import"))
+      return rc;
+    if (o.access.empty ())
+      o.access = setup_conf_get ("access_list");
+    if (o.access.empty ())
+      return usage ("roles import: --access (or access_list in the configuration) is required");
+    std::string text;
+    if (!Signed_File::slurp (o.access, text))
+      return refuse ("cannot read " + o.access);
+    Access_List::Content c;
+    std::string error;
+    if (!Access_List::parse (text, c, error))
+      return refuse (o.access + ": " + error);
+
+    // (principal, via) -> its allow rules, as text, in order.
+    std::map<std::pair<std::string, std::string>, std::vector<std::string>> by_who;
+    std::vector<std::string> skipped;
+    for (Access_List::Rule const &r : c.rules)
+      {
+        std::string const line = std::string (r.allow ? "allow " : "deny ") + r.principal + " " + rule_text (r)
+                                 + (r.via.empty () ? "" : " via=" + r.via);
+        if (!r.allow)
+          skipped.push_back (line + "  (deny: stays in the access list, applied first)");
+        else if (r.principal == "*")
+          skipped.push_back (line + "  (any identified caller: name the principals or a group)");
+        else
+          by_who[std::make_pair (r.principal, r.via)].push_back (rule_text (r));
+      }
+
+    // One role for each distinct set of rules.
+    std::map<std::vector<std::string>, std::string> role_of;
+    std::vector<std::vector<std::string>> order;
+    for (auto const &w : by_who)
+      if (role_of.find (w.second) == role_of.end ())
+        {
+          role_of[w.second] = "imported-" + std::to_string (role_of.size () + 1);
+          order.push_back (w.second);
+        }
+
+    std::string out = "# Role map drafted by \"ace-tao-setup roles import\" from " + o.access + " (version "
+                      + std::to_string (c.version) + ", " + std::to_string (c.rules.size ()) + " rule(s)).\n"
+                      "# Review it before signing: rename the roles, give each role its rights in\n"
+                      "# the grants table (with a domain for objects that need one), and list the\n"
+                      "# operations in the rights table.  Roles grant rights, not objects, so a\n"
+                      "# role's rules below are what it replaces, not what it will allow.\n";
+    for (auto const &rules : order)
+      {
+        out += "#\n# " + role_of[rules] + " stands for:\n";
+        for (std::string const &r : rules)
+          out += "#   allow " + r + "\n";
+      }
+    out += "\n";
+    for (auto const &w : by_who)
+      out += "role " + w.first.first + " " + role_of[w.second] + (w.first.second.empty () ? "" : " via=" + w.first.second)
+             + "\n";
+    if (!skipped.empty ())
+      {
+        out += "\n# Not imported:\n";
+        for (std::string const &l : skipped)
+          out += "#   " + l + "\n";
+      }
+    if (o.out.empty ())
+      ACE_OS::fputs (out.c_str (), stdout);
+    else
+      {
+        FILE *const f = ACE_OS::fopen (o.out.c_str (), "w");
+        if (f == nullptr || ACE_OS::fputs (out.c_str (), f) < 0 || ACE_OS::fclose (f) != 0)
+          return refuse ("cannot write " + o.out);
+        ACE_OS::printf ("drafted %zu role line(s) and %zu role(s) into %s; %zu rule(s) not imported\n",
+                        by_who.size (), order.size (), o.out.c_str (), skipped.size ());
+      }
+    return EXIT_OK;
   }
 }
 
@@ -344,7 +521,9 @@ setup_tables (char const *what, int argc, ACE_TCHAR *argv[])
     return cmd_sign (kind, argc - 1, argv + 1);
   if (sub == "check")
     return cmd_check (kind, argc - 1, argv + 1);
-  if (sub == "test")
+  if (sub == "test" && kind == Policy_Tables::ROLES)
     return cmd_test (argc - 1, argv + 1);
+  if (sub == "import" && kind == Policy_Tables::ROLES)
+    return cmd_import (argc - 1, argv + 1);
   return usage (w + ": unknown subcommand " + sub);
 }

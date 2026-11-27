@@ -1,4 +1,5 @@
 #include "orbsvcs/SSLIOP/SSLIOP_Role_Model.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Asserter_List.h"
 
 #include "tao/Security_Mode.h"
 
@@ -61,6 +62,45 @@ namespace
     if (!caller.subject.empty ())
       out.push_back (caller.subject);
     return out;
+  }
+
+  /// No identity at all: no certificate, no login, nothing asserted; or
+  /// an asserted anonymous caller (ITTAnonymous).
+  bool
+  anonymous_caller (TAO::Security::Caller const &caller)
+  {
+    if (!caller.asserted.empty ())
+      return caller.asserted == "anonymous";
+    return !caller.local && caller.authenticated.empty () && caller.spiffe_ids.empty () && caller.subject.empty ();
+  }
+
+  /// The rest of @a line after its first @a n words, blanks collapsed.
+  std::string
+  rest_after (std::vector<std::string> const &w, size_t n)
+  {
+    std::string out;
+    for (size_t i = n; i < w.size (); ++i)
+      out += (out.empty () ? "" : " ") + w[i];
+    return out;
+  }
+
+  /// "S-1-" then dash-separated decimal numbers.
+  bool
+  sid_text (std::string const &s)
+  {
+    if (s.size () < 5 || s.size () > 184 || s.compare (0, 4, "S-1-") != 0)
+      return false;
+    bool digit = false;
+    for (size_t i = 4; i < s.size (); ++i)
+      {
+        if (::isdigit (static_cast<unsigned char> (s[i])))
+          digit = true;
+        else if (s[i] == '-' && digit)
+          digit = false;
+        else
+          return false;
+      }
+    return digit;
   }
 }
 
@@ -211,14 +251,94 @@ TAO::SSLIOP::Role_Model::parse (Policy_Tables::Table const &t, Role_Map &out, st
   for (auto const &l : t.lines)
     {
       std::vector<std::string> const w = words (l.second);
-      // role PRINCIPAL ROLE[,ROLE...]
-      if (w.size () != 3 || w[0] != "role")
+      if (w.empty ())
+        continue;
+      if (w[0] == "group")
         {
-          error = at (l.first, "expected \"role PRINCIPAL ROLE[,ROLE...]\"");
+          // group NAME PRINCIPAL (the rest of the line)
+          if (w.size () < 3 || !role_name (w[1]))
+            {
+              error = at (l.first, "expected \"group NAME PRINCIPAL\" (NAME as a role name)");
+              return false;
+            }
+          std::string const member = rest_after (w, 2);
+          if (member == "anonymous" || member.compare (0, 6, "group:") == 0 || member.compare (0, 4, "sid:") == 0)
+            {
+              error = at (l.first, "a group member is a principal, not \"" + member + "\"");
+              return false;
+            }
+          out.members[w[1]].insert (member);
+          continue;
+        }
+      if (w[0] == "sid")
+        {
+          // sid SID NAME... (the rest of the line)
+          if (w.size () < 3 || !sid_text (w[1]))
+            {
+              error = at (l.first, "expected \"sid S-1-... NAME\"");
+              return false;
+            }
+          out.sid_names[w[1]] = rest_after (w, 2);
+          continue;
+        }
+      // role WHO ROLE[,ROLE...] [via=ASSERTER] [factors=tls+gssup]
+      if (w[0] != "role" || w.size () < 3)
+        {
+          error = at (l.first, "expected \"role WHO ROLE[,ROLE...] [via=ASSERTER] [factors=tls+gssup]\", "
+                               "\"group NAME PRINCIPAL\" or \"sid SID NAME\"");
           return false;
         }
-      std::istringstream in (w[2]);
-      bool any = false;
+      Role_Line rl;
+      rl.line = l.first;
+      size_t last = w.size ();
+      while (last > 3)
+        {
+          std::string const &o = w[last - 1];
+          if (o.compare (0, 4, "via=") == 0)
+            {
+              if (o.size () == 4 || !rl.via.empty ())
+                {
+                  error = at (l.first, "via= needs one asserter");
+                  return false;
+                }
+              rl.via = o.substr (4);
+            }
+          else if (o.compare (0, 8, "factors=") == 0)
+            {
+              if (o != "factors=tls+gssup" || rl.two_factor)
+                {
+                  error = at (l.first, "factors= takes tls+gssup (once)");
+                  return false;
+                }
+              rl.two_factor = true;
+            }
+          else
+            break;
+          --last;
+        }
+      std::string const who = rest_after (std::vector<std::string> (w.begin (), w.begin () + (last - 1)), 1);
+      std::string const &role_list = w[last - 1];
+      if (who.empty ())
+        {
+          error = at (l.first, "no principal");
+          return false;
+        }
+      if (who.compare (0, 6, "group:") == 0 && !role_name (who.substr (6)))
+        {
+          error = at (l.first, "bad group name \"" + who.substr (6) + "\"");
+          return false;
+        }
+      if (who.compare (0, 4, "sid:") == 0 && !sid_text (who.substr (4)))
+        {
+          error = at (l.first, "bad SID \"" + who.substr (4) + "\"");
+          return false;
+        }
+      if (who == "anonymous" && rl.two_factor)
+        {
+          error = at (l.first, "an anonymous caller proves no factors");
+          return false;
+        }
+      std::istringstream in (role_list);
       for (std::string r; std::getline (in, r, ','); )
         {
           if (!role_name (r))
@@ -226,16 +346,78 @@ TAO::SSLIOP::Role_Model::parse (Policy_Tables::Table const &t, Role_Map &out, st
               error = at (l.first, "bad role name \"" + r + "\"");
               return false;
             }
-          out.by_principal[w[1]].insert (r);
-          any = true;
+          rl.roles.insert (r);
         }
-      if (!any)
+      if (rl.roles.empty ())
         {
           error = at (l.first, "no role");
           return false;
         }
+      out.by_key[who].push_back (rl);
     }
   return true;
+}
+
+std::set<std::string>
+TAO::SSLIOP::Role_Model::roles_of (Role_Map const &roles, TAO::Security::Caller const &caller,
+                                   std::vector<std::string> *sources)
+{
+  bool const asserted = !caller.asserted.empty ();
+  // The keys this caller answers to (R35, R37).
+  std::vector<std::string> keys;
+  if (anonymous_caller (caller))
+    keys.push_back ("anonymous");
+  else
+    {
+      std::vector<std::string> const names = names_of (caller);
+      keys = names;
+      std::set<std::string> groups;
+      for (auto const &g : roles.members)
+        for (std::string const &n : names)
+          if (g.second.count (n) != 0)
+            groups.insert (g.first);
+      // Ticket and store groups belong to the authenticated login: an
+      // asserted caller does not have them.
+      if (!asserted)
+        {
+          groups.insert (caller.login_groups.begin (), caller.login_groups.end ());
+          for (std::string const &sid : caller.groups)
+            keys.push_back ("sid:" + sid);
+        }
+      for (std::string const &g : groups)
+        keys.push_back ("group:" + g);
+    }
+
+  bool const two_factor = !asserted && caller.authenticated_mech == "gssup" && !caller.transport ().empty ();
+  std::set<std::string> out;
+  for (std::string const &k : keys)
+    {
+      auto const r = roles.by_key.find (k);
+      if (r == roles.by_key.end ())
+        continue;
+      bool used = false;
+      for (Role_Line const &rl : r->second)
+        {
+          if (!rl.via.empty () && !(asserted && !caller.asserter.empty () && (rl.via == "*" || rl.via == caller.asserter)))
+            continue;
+          if (rl.two_factor && !two_factor)
+            continue;
+          out.insert (rl.roles.begin (), rl.roles.end ());
+          used = true;
+        }
+      if (used && sources != nullptr)
+        {
+          std::string label = k;
+          if (k.compare (0, 4, "sid:") == 0)
+            {
+              auto const n = roles.sid_names.find (k.substr (4));
+              if (n != roles.sid_names.end ())
+                label += "(" + n->second + ")";
+            }
+          sources->push_back (label);
+        }
+    }
+  return out;
 }
 
 bool
@@ -311,19 +493,28 @@ TAO::SSLIOP::Role_Model::decide (Rights_Table const &rights,
                                  std::string const &interface_id,
                                  std::string const &object_path,
                                  std::string const &operation,
-                                 bool unlisted_allowed)
+                                 bool unlisted_allowed,
+                                 std::set<std::string> const *cap)
 {
   Decision d;
 
   // What the operation requires (R33).
   d.listed = lookup (rights, interface_id, operation, d.required);
 
-  // The caller's roles (R35; groups and conditions come in T3).
-  for (std::string const &n : names_of (caller))
+  // The caller's roles (R35 to R37), within its asserter's cap (R36).
+  d.roles = roles_of (roles, caller, &d.sources);
+  if (cap != nullptr && !caller.asserted.empty ())
     {
-      auto const r = roles.by_principal.find (n);
-      if (r != roles.by_principal.end ())
-        d.roles.insert (r->second.begin (), r->second.end ());
+      for (auto i = d.roles.begin (); i != d.roles.end (); )
+        {
+          if (cap->count (*i) == 0)
+            {
+              d.capped.insert (*i);
+              i = d.roles.erase (i);
+            }
+          else
+            ++i;
+        }
     }
 
   // The domain: the longest POA domain the object is in, else the
@@ -358,7 +549,7 @@ TAO::SSLIOP::Role_Model::decide (Rights_Table const &rights,
   if (d.allowed)
     d.why = "roles hold " + rights_text (d.held & need);
   else if (d.roles.empty ())
-    d.why = "the caller has no role";
+    d.why = d.capped.empty () ? "the caller has no role" : "the caller's roles are outside its asserter's roles= cap";
   else
     d.why = "roles hold " + rights_text (d.held) + " in the " + d.domain + " domain, " + (d.required.any ? "any of " : "")
             + rights_text (need) + " required";
@@ -468,6 +659,19 @@ TAO::SSLIOP::Role_Model::Engine::decide (TAO::Security::Caller const &caller,
   TAO_Security_Mode::Host_Config const &h = TAO_Security_Mode::host ();
   bool const unlisted_allowed = h.mode != TAO_Security_Mode::MODE_PROD && h.get ("access_default", "allow") == "allow";
 
+  // An asserted caller is bounded by its asserter's roles= (R36).
+  std::set<std::string> cap;
+  bool capped = false;
+  if (!caller.asserted.empty () && !caller.asserter.empty ())
+    {
+      Asserter_List::Entry e;
+      if (Asserter_List::instance ()->find (std::vector<std::string> (1, caller.asserter), e) && e.capped)
+        {
+          cap = e.roles;
+          capped = true;
+        }
+    }
+
   // Test-mode RequiredRights changes (R41) apply over the table.
   std::map<std::pair<std::string, std::string>, Requirement> overrides;
   {
@@ -475,11 +679,13 @@ TAO::SSLIOP::Role_Model::Engine::decide (TAO::Security::Caller const &caller,
     overrides = this->overrides_;
   }
   if (overrides.empty ())
-    return Role_Model::decide (*r, *g, *m, caller, interface_id, object_path, operation, unlisted_allowed);
+    return Role_Model::decide (*r, *g, *m, caller, interface_id, object_path, operation, unlisted_allowed,
+                               capped ? &cap : nullptr);
   Rights_Table merged = *r;
   for (auto const &o : overrides)
     merged.ops[o.first] = o.second;
-  return Role_Model::decide (merged, *g, *m, caller, interface_id, object_path, operation, unlisted_allowed);
+  return Role_Model::decide (merged, *g, *m, caller, interface_id, object_path, operation, unlisted_allowed,
+                             capped ? &cap : nullptr);
 }
 
 bool

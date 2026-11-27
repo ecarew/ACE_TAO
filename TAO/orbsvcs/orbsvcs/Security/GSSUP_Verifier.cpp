@@ -11,6 +11,12 @@ namespace
 
 TAO::Security::GSSUP_Verifier::~GSSUP_Verifier () = default;
 
+std::vector<std::string>
+TAO::Security::GSSUP_Verifier::groups (std::string const &)
+{
+  return std::vector<std::string> ();
+}
+
 void
 TAO::Security::GSSUP_Verifier::install (GSSUP_Verifier *verifier)
 {

@@ -17,6 +17,10 @@ eval '(exit $?0)' && eval 'exec perl -S $0 ${1+"$@"}'
 #    them), picks up a newly signed table within roles_reload, keeps the
 #    last good table when a new file fails, and with roles_state refuses
 #    after a restart a version lower than one it accepted before.
+# T2 adds the decision (rights, grants, roles; R33, R34, R38, R41) and T3
+# the full role map: role-map, store and AD SID groups, via= and
+# factors=tls+gssup conditions, asserter roles= caps, anonymous, and
+# ace-tao-setup roles import (R35 to R37, R40).
 # Uses the SAS test's server and client; certificates and the deny-list
 # signer from ../Transport.
 
@@ -311,7 +315,7 @@ expect ('an explicit deny in the access list wins over her roles', call ('beta',
         ['^whoami EXCEPTION NO_PERMISSION$']);
 $o = log_now ();
 expect ('  (audited: roles held, rights required, domain and table versions)', $o,
-        ['reason="ACCESS_DENIED" principal="spiffe://ace-tao\.test/client" .*op="poke" interface="IDL:Who:1\.0" roles="reader" rights_required="set" domain="service" tables="rights v\d+, grants v\d+, roles v\d+"\] roles hold get in the service domain, set required',
+        ['reason="ACCESS_DENIED" principal="spiffe://ace-tao\.test/client" .*op="poke" interface="IDL:Who:1\.0" roles="reader" rights_required="set" domain="service" tables="rights v\d+, grants v\d+, roles v\d+" roles_from="spiffe://ace-tao\.test/client"\] roles hold get in the service domain, set required',
          'reason="ACCESS_DENIED" principal="alice\@lab\.test" .*op="shutdown" .*rights_required="manage" domain="service"',
          'reason="ACCESS_GRANTED" principal="alice\@lab\.test" .*op="poke" interface="IDL:Who:1\.0" roles="reader,writer" rights_required="set"',
          'reason="ACCESS_DENIED" principal="alice\@lab\.test" .*op="relay" .*rights_required="\(unlisted\)".*\] the operation is not in the required-rights table',
@@ -385,6 +389,157 @@ expect ('  ... and changes the in-memory requirement in test mode (audited)',
         ['^SET OK$', '^RIGHTS gu any$', 'reason="REQUIRED_RIGHTS_SET" .*rights_required="any:get,use"']);
 expect ('without roles_dir there is no RequiredRights object (NO_IMPLEMENT)', rr ('client.conf', 'IDL:Who:1.0', 'poke'),
         ['^NO_IMPLEMENT$']);
+
+
+# --- T3: groups, conditions, asserter caps, anonymous (R35 to R37) ---------------------------
+my $t3 = "$work/t3tables";
+mkdir $t3;
+spit ("$work/t3_roles.draft", <<'EOT');
+# T3 role map
+role alice@lab.test writer
+group operators bob@lab.test
+role group:operators admin factors=tls+gssup
+role group:auditors reader
+role sid:S-1-5-21-1-2-3-1105 admin
+sid  S-1-5-21-1-2-3-1105 AD.LAB.TEST\ns-admins
+role carol@lab.test writer via=spiffe://ace-tao.test/portal
+role dave@lab.test admin,writer
+role anonymous reader
+role CN=legacy gateway,O=Example reader
+EOT
+$o = tool ("roles sign $sign --file $work/t3_roles.draft --dir $t3");
+expect ('a role map with groups, SIDs, conditions and anonymous signs cleanly', $o, ['table roles version \d+ .*signed into']);
+tool ("$_ sign $sign --file $work/t2_$_.draft --dir $t3") foreach qw(rights grants);
+sub t3 {
+    my ($args, $op) = @_;
+    return tool ("roles test --dir $t3 --interface IDL:Who:1.0 --op $op --object /RootPOA/Who/alpha $args");
+}
+expect ('factors=tls+gssup: a role-map group member is refused with a login alone',
+        t3 ('--principal bob@lab.test', 'shutdown'), ['^REFUSED: bob\@lab\.test shutdown ', 'the caller has no role']);
+expect ('  ... and holds the role with a login over a certificate',
+        t3 ('--principal bob@lab.test --cert spiffe://ace-tao.test/client', 'shutdown'),
+        ['^ALLOWED: bob\@lab\.test shutdown ', '^  roles from: group:operators$', 'roles admin;']);
+expect ('  ... never on a certificate alone', t3 ('--principal spiffe://ace-tao.test/client', 'whoami'),
+        ['^REFUSED: ', 'the caller has no role']);
+expect ('a store group (groups= on the login\'s store line) gives group:NAME roles',
+        t3 ('--principal erin@lab.test --groups auditors', 'whoami'), ['^ALLOWED: erin\@lab\.test whoami ', '^  roles from: group:auditors$']);
+expect ('an AD group SID from the ticket gives sid: roles, shown with its readable name (Q4)',
+        t3 ('--principal frank@AD.LAB.TEST --sids S-1-5-21-1-2-3-513,S-1-5-21-1-2-3-1105', 'shutdown'),
+        ['^ALLOWED: frank\@AD\.LAB\.TEST shutdown ', '^  roles from: sid:S-1-5-21-1-2-3-1105\(AD\.LAB\.TEST\\\\ns-admins\)$']);
+expect ('via=: carol\'s role holds only when the named asserter asserts her',
+        t3 ('--principal carol@lab.test', 'poke')
+        . t3 ('--principal spiffe://ace-tao.test/portal --asserted carol@lab.test --via spiffe://ace-tao.test/portal', 'poke')
+        . t3 ('--principal spiffe://ace-tao.test/kiosk --asserted carol@lab.test --via spiffe://ace-tao.test/kiosk', 'poke'),
+        ['^REFUSED: carol\@lab\.test poke .*\n.*the caller has no role', '^ALLOWED: carol\@lab\.test poke ',
+         '^REFUSED: carol\@lab\.test poke .*\n.*the caller has no role\n.*\n(?!ALLOWED)']);
+expect ('an asserter cap (roles=) removes what it does not list (R36)',
+        t3 ('--principal spiffe://ace-tao.test/portal --asserted dave@lab.test --via spiffe://ace-tao.test/portal --cap reader,writer', 'shutdown')
+        . t3 ('--principal spiffe://ace-tao.test/portal --asserted dave@lab.test --via spiffe://ace-tao.test/portal --cap reader,writer', 'poke'),
+        ['^REFUSED: dave\@lab\.test shutdown ', '^  removed by the asserter\'s cap: admin$', 'roles writer; requires manage',
+         '^ALLOWED: dave\@lab\.test poke ']);
+expect ('  ... and a cap that leaves nothing says so',
+        t3 ('--principal spiffe://ace-tao.test/portal --asserted dave@lab.test --via spiffe://ace-tao.test/portal --cap reader', 'poke'),
+        ['^REFUSED: ', 'the caller\'s roles are outside its asserter\'s roles= cap']);
+expect ('an asserted caller gets neither the ticket SIDs nor the store groups on the request',
+        t3 ('--principal frank@AD.LAB.TEST --sids S-1-5-21-1-2-3-1105 --groups auditors --asserted erin@lab.test --via frank@AD.LAB.TEST', 'whoami'),
+        ['^REFUSED: erin\@lab\.test whoami ', 'the caller has no role']);
+expect ('  ... nor factors=tls+gssup, even asserted by a login over a certificate',
+        t3 ('--principal alice@lab.test --cert spiffe://ace-tao.test/client --asserted bob@lab.test --via alice@lab.test', 'shutdown'),
+        ['^REFUSED: bob\@lab\.test shutdown ', 'the caller has no role']);
+expect ('anonymous: only the explicit anonymous line gives roles (R37)',
+        t3 ('--anonymous', 'whoami') . t3 ('--anonymous', 'poke'),
+        ['^ALLOWED: anonymous whoami ', '^  roles from: anonymous$', '^REFUSED: anonymous poke ']);
+expect ('a subject DN with blanks is a principal', t3 ("--principal 'CN=legacy gateway,O=Example'", 'whoami'),
+        ['^ALLOWED: CN=legacy gateway,O=Example whoami ']);
+foreach my $bad (["role anonymous reader factors=tls+gssup\n", 'an anonymous caller proves no factors'],
+                 ["role alice\@lab.test reader factors=tls+krb5\n", 'factors= takes tls\+gssup'],
+                 ["role sid:S-1-x reader\n", 'bad SID'],
+                 ["group 9ops bob\@lab.test\n", 'expected "group NAME PRINCIPAL"'],
+                 ["group ops group:other\n", 'a group member is a principal'],
+                 ["role group:bad! reader\n", 'bad group name'],
+                 ["role alice\@lab.test reader via=\n", 'no principal|via= needs one asserter']) {
+    spit ("$work/t3_bad.draft", $bad->[0]);
+    expect ("the role map refuses: $bad->[0]" =~ s/\n$//r, tool ("roles sign $sign --file $work/t3_bad.draft --dir $t3"),
+            [$bad->[1]], ['signed into']);
+}
+
+# ace-tao-setup roles import: a role map drafted from the interim access list.
+spit ("$work/import.list", "version 4\nissued 2026-01-01T00:00:00Z\n"
+                         . "allow spiffe://ace-tao.test/admin *\n"
+                         . "allow spiffe://ace-tao.test/sweeper /RootPOA/NameService* resolve list\n"
+                         . "allow spiffe://ace-tao.test/sweeper2 /RootPOA/NameService* resolve list\n"
+                         . "deny spiffe://ace-tao.test/sweeper /RootPOA/NameService* destroy\n"
+                         . "allow carol\@lab.test /RootPOA/Ledger/accounts read via=spiffe://ace-tao.test/portal\n"
+                         . "allow * /RootPOA/Status/info\n");
+$o = tool ("roles import --access $work/import.list");
+expect ('roles import drafts one role for each distinct set of allow rules', $o,
+        ['^# Role map drafted by "ace-tao-setup roles import" from \S+import\.list \(version 4, 6 rule\(s\)\)',
+         '^role spiffe://ace-tao\.test/sweeper (imported-\d+)\nrole spiffe://ace-tao\.test/sweeper2 \1$',
+         '^role carol\@lab\.test imported-\d+ via=spiffe://ace-tao\.test/portal$',
+         '^#   allow /RootPOA/NameService\* list resolve$',
+         '^#   deny spiffe://ace-tao\.test/sweeper /RootPOA/NameService\* destroy  \(deny: stays in the access list',
+         '^#   allow \* /RootPOA/Status/info \(all operations\)  \(any identified caller']);
+$o = tool ("roles import --access $work/import.list --out $work/imported.draft");
+expect ('  ... into a file, which signs as a role map', $o . tool ("roles sign $sign --file $work/imported.draft --dir $work/cycle"),
+        ['drafted 4 role line\(s\) and 3 role\(s\) into ', '; 2 rule\(s\) not imported', 'table roles version \d+ .*signed into']);
+
+# ace-tao-setup user groups, and the asserter list's roles=.
+my $store = "$work/t3.store";
+my $pw_erin = 'erin-has-a-long-password';
+my $pw_bob = 'bob-has-a-long-password';
+spit ("$work/pw_erin", "$pw_erin\n");
+spit ("$work/pw_bob", "$pw_bob\n");
+chmod (0600, "$work/pw_erin", "$work/pw_bob");
+sub user_tool { my ($args, $in) = @_; return scalar (`echo '$in' | $tool --conf $tconf user $args --store $store 2>&1`); }
+user_tool ("add erin --password-stdin --cost 12", $pw_erin);
+user_tool ("add bob --password-stdin --cost 12", $pw_bob);
+expect ('user groups sets a user\'s store groups (audited)', user_tool ('groups erin --set auditors,ops'),
+        ['^Set the groups of erin in \S+: auditors,ops$', 'reason="GSSUP_USER_CHANGED" .*action="groups"']);
+expect ('  ... refuses a bad group name', user_tool ('groups erin --set "bad group"'), ['bad group name']);
+user_tool ("passwd erin --password-stdin", $pw_erin);
+expect ('  ... which passwd keeps, and list shows', user_tool ('list') . slurp ($store),
+        ['^erin\s+active\s+scrypt N=2\^12 r=8 p=1 groups=auditors,ops$', '^erin scrypt:\S+ active groups=auditors,ops$']);
+user_tool ('groups erin --set auditors');
+chmod (0600, $store);
+
+my $t3ast = "$work/t3_asserters.list";
+spit ($t3ast, "version 0\nissued 2026-01-01T00:00:00Z\nasserter spiffe://ace-tao.test/client types=name realms=\@lab.test roles=reader,writer\n");
+$o = `$tool --conf /dev/null asserters sign $deny_sign --file $t3ast --bump 2>&1`;
+die "asserters sign failed:\n$o" unless $o =~ /signed into/;
+expect ('asserters check shows an asserter\'s roles= cap',
+        scalar (`$tool --conf /dev/null asserters check --file $t3ast --signer $certs/signer_pub.pem 2>&1`),
+        ['^  spiffe://ace-tao\.test/client types=name realms=\@lab\.test roles=reader,writer$']);
+spit ("$work/t3_bad_asserters.list", "version 0\nissued 2026-01-01T00:00:00Z\nasserter spiffe://ace-tao.test/client roles=ok,bad!\n");
+expect ('  ... and refuses a bad role name in it',
+        scalar (`$tool --conf /dev/null asserters sign $deny_sign --file $work/t3_bad_asserters.list --bump 2>&1`),
+        ['bad role name "bad!" in roles='], ['signed into']);
+
+# Live: store groups, two factors and an asserter cap on a running service.
+spit ("$work/t3.conf", $base . "audit_grants = on\ncsiv2 = supported\ncsiv2_gssup = supported\ngssup_target = \@lab.test\n"
+                      . "gssup_store = $store\ncsiv2_asserters = $t3ast\ncsiv2_asserters_signer = $certs/signer_pub.pem\n"
+                      . "roles_dir = $t3\nroles_signer = $work/roles_pub.pem\nroles_signer_sha256 = $rpin\n");
+chmod (0600, "$work/t3.conf");
+$ENV{'SAS_TEST_NO_VERIFIER'} = '1';
+start_server ('t3');
+delete $ENV{'SAS_TEST_NO_VERIFIER'};
+expect ('the service starts with the T3 role map, store and asserter list', slurp ($log),
+        ['SERVER READY', 'checks: \d+ ok, \d+ warn, 0 fail']);
+expect ('the client certificate alone has no role here', call ('alpha', 'whoami'), ['^whoami EXCEPTION NO_PERMISSION$']);
+expect ('erin\'s store group auditors gives her reader', call ('alpha', 'whoami', "-g erin\@lab.test:file:$work/pw_erin"),
+        ['^WHOAMI ']);
+expect ('  ... but not poke', call ('alpha', 'poke', "-g erin\@lab.test:file:$work/pw_erin"), ['^poke EXCEPTION NO_PERMISSION$']);
+expect ('bob (group operators, login over a certificate: two factors) may poke',
+        call ('alpha', 'poke', "-g bob\@lab.test:file:$work/pw_bob"), ['^POKE OK$']);
+expect ('dave asserted by the client certificate, capped to reader,writer, may poke',
+        call ('alpha', 'poke', '-a name:dave@lab.test'), ['^POKE OK$']);
+call ('alpha', 'shutdown', '-a name:dave@lab.test');   # oneway: the refusal is in the audit record
+$o = log_now ();
+expect ('  (audited: login groups, where the roles came from, what the cap removed)', $o,
+        ['reason="SAS_ACCEPTED" principal="erin\@lab\.test" .*login_groups="auditors"',
+         'reason="ACCESS_GRANTED" principal="erin\@lab\.test" .*roles="reader" .*roles_from="group:auditors"',
+         'reason="ACCESS_GRANTED" principal="bob\@lab\.test" .*op="poke" .*roles="admin" .*roles_from="group:operators"',
+         'reason="ACCESS_DENIED" principal="dave\@lab\.test" asserter="spiffe://ace-tao\.test/client" .*op="shutdown" .*roles="writer" rights_required="manage" .*roles_from="dave\@lab\.test" roles_capped="admin"']);
+stop_server ();
 
 rmtree ($work) if $status == 0;
 exit $status;

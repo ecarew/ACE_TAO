@@ -17,6 +17,7 @@
  *    asserter spiffe://ace-tao.test/gateway
  *    asserter spiffe://ace-tao.test/portal  types=name,x509  realms=@lab.test,@partner.test
  *    asserter CN=legacy gateway,O=Example   types=dn
+ *    asserter spiffe://ace-tao.test/kiosk   roles=reader
  *  @endcode
  *
  *  - principal: a SPIFFE ID or an RFC 2253 certificate subject, matched
@@ -28,7 +29,10 @@
  *    (ITTX509CertChain), anonymous (ITTAnonymous, also needs
  *    allow_anonymous_assertion = on).  Default: name;
  *  - realms: for asserted names, the realms it may assert, or *.
- *    Default: the service's own (gssup_target).
+ *    Default: the service's own (gssup_target);
+ *  - roles: the roles its asserted callers can reach under the role
+ *    model (Phase 3 T3, R36): an asserted caller holds the role map's
+ *    roles for it that are also in this list.  Default: no cap.
  *
  *  The file sits next to FILE.sig like the deny-list
  *  (SSLIOP_Signed_File.h).  security.conf keys:
@@ -84,6 +88,8 @@ namespace TAO
         std::string principal;
         unsigned long types = 0;          ///< CSI::ITT* bits
         std::set<std::string> realms;     ///< "@realm"; "*" any; empty: the service's
+        bool capped = false;              ///< roles= given (R36)
+        std::set<std::string> roles;      ///< the cap
       };
 
       struct Content

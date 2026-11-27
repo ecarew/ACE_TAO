@@ -53,7 +53,26 @@ namespace
                                   {"x509", CSI::ITTX509CertChain},
                                   {"anonymous", CSI::ITTAnonymous}};
 
-  /// Parses "asserter PRINCIPAL [types=...] [realms=...]" (the value).
+  bool
+  option (std::string const &w)
+  {
+    return w.compare (0, 6, "types=") == 0 || w.compare (0, 7, "realms=") == 0 || w.compare (0, 6, "roles=") == 0;
+  }
+
+  /// A role name, as in the role map: a letter, then letters, digits,
+  /// '-', '_', '.'; at most 64.
+  bool
+  role_name (std::string const &r)
+  {
+    if (r.empty () || r.size () > 64 || !::isalpha (static_cast<unsigned char> (r[0])))
+      return false;
+    for (char c : r)
+      if (!::isalnum (static_cast<unsigned char> (c)) && c != '-' && c != '_' && c != '.')
+        return false;
+    return true;
+  }
+
+  /// Parses "asserter PRINCIPAL [types=...] [realms=...] [roles=...]" (the value).
   bool
   parse_entry (std::string const &value, TAO::SSLIOP::Asserter_List::Entry &e, std::string &error)
   {
@@ -73,7 +92,7 @@ namespace
     size_t i = 0;
     for (; i < words.size (); ++i)
       {
-        if (words[i].compare (0, 6, "types=") == 0 || words[i].compare (0, 7, "realms=") == 0)
+        if (option (words[i]))
           break;
         e.principal += (e.principal.empty () ? "" : " ") + words[i];
       }
@@ -120,6 +139,24 @@ namespace
                 if (r != "*" && r[0] != '@')
                   r = "@" + r;
                 e.realms.insert (r);
+              }
+          }
+        else if (w.compare (0, 6, "roles=") == 0)
+          {
+            if (e.capped)
+              {
+                error = "roles= given twice";
+                return false;
+              }
+            e.capped = true;
+            for (std::string const &r : split (w.substr (6), ','))
+              {
+                if (!role_name (r))
+                  {
+                    error = "bad role name \"" + r + "\" in roles=";
+                    return false;
+                  }
+                e.roles.insert (r);
               }
           }
         else

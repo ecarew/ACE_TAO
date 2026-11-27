@@ -290,8 +290,12 @@ namespace
         std::string realms;
         for (auto const &r : e.realms)
           realms += (realms.empty () ? "" : ",") + r;
-        ACE_OS::printf ("  %s types=%s realms=%s\n", e.principal.c_str (), Asserter_List::type_names (e.types).c_str (),
-                        realms.empty () ? "(the service's gssup_target)" : realms.c_str ());
+        std::string roles;
+        for (auto const &r : e.roles)
+          roles += (roles.empty () ? "" : ",") + r;
+        ACE_OS::printf ("  %s types=%s realms=%s%s%s\n", e.principal.c_str (), Asserter_List::type_names (e.types).c_str (),
+                        realms.empty () ? "(the service's gssup_target)" : realms.c_str (), e.capped ? " roles=" : "",
+                        e.capped ? roles.c_str () : "");
       }
     return EXIT_OK;
   }
