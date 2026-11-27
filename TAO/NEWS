@@ -1,6 +1,11 @@
 USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
 ====================================================
 
+. CORBA::ORB_init() destroys the ORB it was creating when an ORB
+  initializer's post_init() throws or a prod host refuses to start, instead
+  of leaking it with the interceptors and managers the initializers had
+  registered.
+
 . SSLIOP transport hardening. In prod an SSLIOP service opens no plain
   IIOP listener: its references advertise IIOP port 0 and only the SSL
   port accepts connections. Every failed TLS handshake is an audit record

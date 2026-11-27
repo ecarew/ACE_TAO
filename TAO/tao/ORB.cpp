@@ -1357,20 +1357,31 @@ CORBA::ORB_init (int &argc, ACE_TCHAR *argv[], const char *orbid)
   result = oc->init (command_line.get_argc(),
                      command_line.get_ASCII_argv());
 
-  if (orbinitializer_registry != nullptr)
+  try
     {
-      orbinitializer_registry->post_init (pre_init_count,
-                                          oc.get (),
-                                          command_line.get_argc(),
-                                          command_line.get_ASCII_argv(),
-                                          slotid);
-    }
+      if (orbinitializer_registry != nullptr)
+        {
+          orbinitializer_registry->post_init (pre_init_count,
+                                              oc.get (),
+                                              command_line.get_argc(),
+                                              command_line.get_ASCII_argv(),
+                                              slotid);
+        }
 
-  // In a host configured for prod, refuse to run without a security
-  // plugin whose self-check passed.  This is in libTAO, not the plugin,
-  // so that removing the plugin cannot remove the check, and it runs
-  // before the ORB opens any listening port.
-  TAO_Security_Mode::enforce (oc.get ());
+      // In a host configured for prod, refuse to run without a security
+      // plugin whose self-check passed.  This is in libTAO, not the
+      // plugin, so that removing the plugin cannot remove the check, and
+      // it runs before the ORB opens any listening port.
+      TAO_Security_Mode::enforce (oc.get ());
+    }
+  catch (...)
+    {
+      // The ORB never reaches the caller: shut it down and destroy the
+      // interceptors and managers the initializers registered, or they
+      // leak (a refused start in prod, or a failing post_init).
+      oc->destroy ();
+      throw;
+    }
 
   if (TAO_debug_level > 2)
     {
