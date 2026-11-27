@@ -1353,12 +1353,19 @@ CORBA::ORB_init (int &argc, ACE_TCHAR *argv[], const char *orbid)
                                            slotid);
     }
 
-  // Initialize the ORB Core instance.
-  result = oc->init (command_line.get_argc(),
-                     command_line.get_ASCII_argv());
-
   try
     {
+      // Initialize the ORB Core instance.  It throws for most bad
+      // arguments but returns -1 for some (e.g. an -ORBLaneEndpoint
+      // without its value), having skipped the rest of its setup.
+      if (oc->init (command_line.get_argc(),
+                    command_line.get_ASCII_argv()) != 0)
+        throw ::CORBA::BAD_PARAM (
+          CORBA::SystemException::_tao_minor_code (
+            TAO_ORB_CORE_INIT_LOCATION_CODE,
+            EINVAL),
+          CORBA::COMPLETED_NO);
+
       if (orbinitializer_registry != nullptr)
         {
           orbinitializer_registry->post_init (pre_init_count,
@@ -1378,7 +1385,8 @@ CORBA::ORB_init (int &argc, ACE_TCHAR *argv[], const char *orbid)
     {
       // The ORB never reaches the caller: shut it down and destroy the
       // interceptors and managers the initializers registered, or they
-      // leak (a refused start in prod, or a failing post_init).
+      // leak (a failed ORB core init, a refused start in prod, or a
+      // failing post_init).
       oc->destroy ();
       throw;
     }

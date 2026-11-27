@@ -141,6 +141,21 @@ if ($? != 0) {
     $status = 1;
 }
 
+# An ORB core init that fails by returning -1 (an -ORBLaneEndpoint whose
+# endpoints are missing) must make ORB_init throw, not return a nil ORB.
+{
+    delete $ENV{'ACE_TAO_SECURITY_CONF'};
+    my $out = `$exe -ORBLaneEndpoint 1 -x 2>&1`;
+    my $exit = $? >> 8;
+    if ($? & 127 || $exit != 1 || $out !~ /BAD_PARAM/ || $out =~ /ORB_INIT OK/) {
+        print STDERR "ERROR: a failed ORB core init should throw BAD_PARAM (exit $exit, signal " . ($? & 127) . ")\n$out\n";
+        $status = 1;
+    }
+    else {
+        print "ok: a failed ORB core init throws BAD_PARAM\n";
+    }
+}
+
 foreach my $c (@cases) {
     my ($name, $sec, $mode, $svcconf, $want_exit, $must, $mustnot) = @$c;
     unlink $conf, $svc;
