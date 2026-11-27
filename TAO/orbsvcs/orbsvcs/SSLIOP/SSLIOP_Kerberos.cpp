@@ -1,8 +1,12 @@
 #include "orbsvcs/SSLIOP/SSLIOP_Kerberos.h"
 
+#include "orbsvcs/Security/Audit_Logger.h"
+
 #include "ace/Guard_T.h"
 #include "tao/orbconf.h"
+#include "tao/Security_Mode.h"
 #include "ace/OS_NS_stdio.h"
+#include "ace/OS_NS_string.h"
 #include "ace/OS_NS_sys_stat.h"
 #include "ace/OS_NS_unistd.h"
 
@@ -11,6 +15,8 @@
 #include <openssl/objects.h>
 #include <openssl/x509.h>
 
+#include <cstdint>
+#include <memory>
 #include <set>
 
 #if defined (TAO_HAS_GSSAPI)
@@ -27,6 +33,92 @@ namespace
   // 1.2.840.113554.1.2.2, without the DER tag and length.
   char const krb5_oid_body[] = "\x2a\x86\x48\x86\xf7\x12\x01\x02\x02";
   size_t const krb5_oid_length = sizeof krb5_oid_body - 1;
+
+  /// The keytab file checks of R31 that need no Kerberos library: a
+  /// regular file and, in @a prod, mode 0600 or 0400 owned by the
+  /// effective user.  @a st gets its status.
+  bool
+  keytab_file_ok (std::string const &path, bool prod, ACE_stat &st, std::string &error)
+  {
+    if (path.empty () || ACE_OS::stat (path.c_str (), &st) != 0)
+      {
+        error = "cannot read keytab " + path;
+        return false;
+      }
+    if ((st.st_mode & S_IFMT) != S_IFREG)
+      {
+        error = path + " is not a regular file";
+        return false;
+      }
+#if !defined (ACE_WIN32)
+    if (prod)
+      {
+        unsigned const mode = static_cast<unsigned> (st.st_mode & 0777);
+        if (mode != 0600 && mode != 0400)
+          {
+            char m[8];
+            ACE_OS::snprintf (m, sizeof m, "%04o", mode);
+            error = path + " is mode " + m + " (want 0600 or 0400)";
+            return false;
+          }
+        if (st.st_uid != ACE_OS::geteuid ())
+          {
+            error = path + " is not owned by the service account";
+            return false;
+          }
+      }
+#else
+    ACE_UNUSED_ARG (prod);
+#endif
+    // Whole, not cut short (a keytab written in place while it is read):
+    // the MIT format is 0x05 0x01|0x02, then records each led by a 4-byte
+    // length (negative for a deleted record's hole) that must end exactly
+    // at the end of the file.  The library stops quietly at a truncated
+    // record, so a half-written file would otherwise pass with fewer keys.
+    FILE *const fp = ACE_OS::fopen (path.c_str (), ACE_TEXT ("rb"));
+    if (fp == nullptr)
+      {
+        error = "cannot read keytab " + path;
+        return false;
+      }
+    std::string bytes;
+    char buf[4096];
+    size_t n = 0;
+    while ((n = ACE_OS::fread (buf, 1, sizeof buf, fp)) > 0)
+      bytes.append (buf, n);
+    ACE_OS::fclose (fp);
+    if (bytes.size () < 2 || bytes[0] != '\x05' || (bytes[1] != '\x01' && bytes[1] != '\x02'))
+      {
+        error = path + " is not a keytab (no MIT keytab header)";
+        return false;
+      }
+    // Version 2 is big-endian; version 1 is in the writer's byte order.
+    std::uint16_t const probe = 1;
+    bool const big_endian = bytes[1] == '\x02' || *reinterpret_cast<unsigned char const *> (&probe) == 0;
+    for (size_t at = 2; at < bytes.size (); )
+      {
+        if (bytes.size () - at < 4)
+          {
+            error = path + " is cut short (a record length runs past its end)";
+            return false;
+          }
+        unsigned char const *b = reinterpret_cast<unsigned char const *> (bytes.data () + at);
+        std::uint32_t const raw = big_endian
+          ? (std::uint32_t (b[0]) << 24) | (std::uint32_t (b[1]) << 16) | (std::uint32_t (b[2]) << 8) | b[3]
+          : (std::uint32_t (b[3]) << 24) | (std::uint32_t (b[2]) << 16) | (std::uint32_t (b[1]) << 8) | b[0];
+        std::int64_t const length = static_cast<std::int32_t> (raw);
+        std::uint64_t const span = length < 0 ? static_cast<std::uint64_t> (-length) : static_cast<std::uint64_t> (length);
+        at += 4;
+        if (span > bytes.size () - at)
+          {
+            error = path + " is cut short (its last record runs past the end of the file)";
+            return false;
+          }
+        at += static_cast<size_t> (span);
+      }
+    ACE_OS::memset (&bytes[0], 0, bytes.size ());
+    return true;
+  }
 
 #if defined (TAO_HAS_GSSAPI)
   /// Appends gss_display_status text for one status code of @a type.
@@ -89,51 +181,297 @@ namespace
     bool use;
   };
 
-  /// The acceptor credential, acquired once from the keytab.  The MIT
-  /// library reads the keytab at each accept, so a rotated key is seen.
-  TAO_SYNCH_MUTEX cred_lock;
-  gss_cred_id_t acceptor_cred = GSS_C_NO_CREDENTIAL;
-  std::string acceptor_key;
+  /**
+   * Reads the keys of @a principal from the keytab file @a path, refusing
+   * DES and RC4 (R31) and a keytab without keys for it.  With @a dest the
+   * keys are also added to that keytab.  @a summary lists the key
+   * versions and encryption types, @a versions counts the versions.
+   */
+  bool
+  read_keytab_keys (krb5_context ctx, std::string const &path, std::string const &principal, krb5_keytab dest,
+                    std::string &summary, std::string &error, size_t *versions)
+  {
+    krb5_keytab kt = nullptr;
+    std::string const name = "FILE:" + path;
+    krb5_error_code rc = ::krb5_kt_resolve (ctx, name.c_str (), &kt);
+    krb5_kt_cursor cursor;
+    if (rc == 0)
+      rc = ::krb5_kt_start_seq_get (ctx, kt, &cursor);
+    if (rc != 0)
+      {
+        char const *msg = ::krb5_get_error_message (ctx, rc);
+        error = "cannot read keytab " + path + ": " + msg;
+        ::krb5_free_error_message (ctx, msg);
+        if (kt != nullptr)
+          ::krb5_kt_close (ctx, kt);
+        return false;
+      }
+    std::set<unsigned> kvnos;
+    std::set<std::string> types;
+    std::set<std::string> weak;
+    std::string add_error;
+    krb5_keytab_entry entry;
+    krb5_error_code next = 0;
+    while ((next = ::krb5_kt_next_entry (ctx, kt, &entry, &cursor)) == 0)
+      {
+        char *p = nullptr;
+        if (::krb5_unparse_name (ctx, entry.principal, &p) == 0)
+          {
+            if (principal == p)
+              {
+                char type[64] = "";
+                ::krb5_enctype_to_name (entry.key.enctype, TRUE, type, sizeof type);
+                kvnos.insert (static_cast<unsigned> (entry.vno));
+                switch (entry.key.enctype)
+                  {
+                  case ENCTYPE_DES_CBC_CRC:
+                  case ENCTYPE_DES_CBC_MD4:
+                  case ENCTYPE_DES_CBC_MD5:
+                  case ENCTYPE_DES3_CBC_SHA1:
+                  case ENCTYPE_ARCFOUR_HMAC:
+                  case ENCTYPE_ARCFOUR_HMAC_EXP:
+                    weak.insert (type);
+                    break;
+                  default:
+                    types.insert (type);
+                    if (dest != nullptr && add_error.empty ())
+                      {
+                        krb5_error_code const arc = ::krb5_kt_add_entry (ctx, dest, &entry);
+                        if (arc != 0)
+                          {
+                            char const *msg = ::krb5_get_error_message (ctx, arc);
+                            add_error = std::string ("cannot hold the keys in memory: ") + msg;
+                            ::krb5_free_error_message (ctx, msg);
+                          }
+                      }
+                  }
+              }
+            ::krb5_free_unparsed_name (ctx, p);
+          }
+        ::krb5_free_keytab_entry_contents (ctx, &entry);
+      }
+    ::krb5_kt_end_seq_get (ctx, kt, &cursor);
+    ::krb5_kt_close (ctx, kt);
 
-  gss_cred_id_t
+    auto join = [] (std::set<std::string> const &set) {
+      std::string out;
+      for (std::string const &x : set)
+        out += (out.empty () ? "" : ",") + x;
+      return out;
+    };
+    // A file cut short (written in place while it was read) ends in a
+    // read error rather than at its end.
+    if (next != KRB5_KT_END)
+      {
+        char const *msg = ::krb5_get_error_message (ctx, next);
+        error = "cannot read keytab " + path + " to its end: " + msg;
+        ::krb5_free_error_message (ctx, msg);
+        return false;
+      }
+    if (!weak.empty ())
+      {
+        error = path + " holds weak keys (" + join (weak) + ") for " + principal;
+        return false;
+      }
+    if (kvnos.empty ())
+      {
+        error = path + " holds no keys for " + principal;
+        return false;
+      }
+    if (!add_error.empty ())
+      {
+        error = add_error;
+        return false;
+      }
+    std::string vs;
+    for (unsigned v : kvnos)
+      vs += (vs.empty () ? "" : ",") + std::to_string (v);
+    summary = principal + " key version(s) " + vs + " (" + join (types) + ")";
+    if (versions != nullptr)
+      *versions = kvnos.size ();
+    return true;
+  }
+
+  /// What identifies one state of the keytab file.  A file renamed over
+  /// it, rewritten or re-permissioned changes it.
+  struct File_State
+  {
+    unsigned long long dev = 0, ino = 0, size = 0, mode = 0, uid = 0;
+    long long mtime = 0;
+    bool present = false;
+
+    explicit File_State (ACE_stat const *st = nullptr)
+    {
+      if (st == nullptr)
+        return;
+      present = true;
+      dev = static_cast<unsigned long long> (st->st_dev);
+      ino = static_cast<unsigned long long> (st->st_ino);
+      size = static_cast<unsigned long long> (st->st_size);
+      mode = static_cast<unsigned long long> (st->st_mode);
+      uid = static_cast<unsigned long long> (st->st_uid);
+      mtime = static_cast<long long> (st->st_mtime);
+    }
+    bool operator== (File_State const &o) const
+    {
+      return present == o.present && dev == o.dev && ino == o.ino && size == o.size && mode == o.mode
+             && uid == o.uid && mtime == o.mtime;
+    }
+    bool operator!= (File_State const &o) const { return !(*this == o); }
+  };
+
+  File_State
+  file_state (std::string const &path)
+  {
+    ACE_stat st;
+    return ACE_OS::stat (path.c_str (), &st) == 0 ? File_State (&st) : File_State ();
+  }
+
+  /// The service's keys, held in a MEMORY keytab of their own, and the
+  /// acceptor credential made on them (the credential holds the keytab
+  /// open; the keytab goes when the credential is released).
+  struct Acceptor_Keys
+  {
+    gss_cred_id_t cred = GSS_C_NO_CREDENTIAL;
+    std::string summary;
+    ~Acceptor_Keys ()
+    {
+      OM_uint32 minor = 0;
+      if (cred != GSS_C_NO_CREDENTIAL)
+        ::gss_release_cred (&minor, &cred);
+    }
+  };
+
+  /// Checks the keytab file and loads the keys of @a principal into
+  /// memory, with an acceptor credential on them; null with @a why.
+  std::shared_ptr<Acceptor_Keys>
+  load_keys (std::string const &principal, std::string const &path, std::string const &rcache, bool prod,
+             std::string &why)
+  {
+    static unsigned long generation = 0;
+    ACE_stat st;
+    if (!keytab_file_ok (path, prod, st, why))
+      return nullptr;
+    krb5_context ctx = nullptr;
+    if (::krb5_init_context (&ctx) != 0)
+      {
+        why = "cannot initialise the Kerberos library";
+        return nullptr;
+      }
+    std::string const mem = "MEMORY:tao-acceptor-" + std::to_string (static_cast<long> (ACE_OS::getpid ())) + "-"
+                            + std::to_string (++generation);
+    krb5_keytab dest = nullptr;
+    std::shared_ptr<Acceptor_Keys> keys;
+    if (::krb5_kt_resolve (ctx, mem.c_str (), &dest) != 0)
+      why = "cannot make an in-memory keytab";
+    else
+      {
+        std::string summary;
+        if (read_keytab_keys (ctx, path, principal, dest, summary, why, nullptr))
+          {
+            gss_name_t name = import_principal (principal, why);
+            if (name != GSS_C_NO_NAME)
+              {
+                gss_key_value_element_desc elements[2];
+                elements[0].key = "keytab";
+                elements[0].value = mem.c_str ();
+                OM_uint32 count = 1;
+                if (!rcache.empty ())
+                  {
+                    elements[1].key = "rcache";
+                    elements[1].value = rcache.c_str ();
+                    count = 2;
+                  }
+                gss_key_value_set_desc store = { count, elements };
+                gss_OID_set_desc mechs = { 1, &krb5_oid_desc };
+                OM_uint32 minor = 0;
+                gss_cred_id_t cred = GSS_C_NO_CREDENTIAL;
+                OM_uint32 const major = ::gss_acquire_cred_from (&minor, name, GSS_C_INDEFINITE, &mechs,
+                                                                 GSS_C_ACCEPT, &store, &cred, nullptr, nullptr);
+                ::gss_release_name (&minor, &name);
+                if (GSS_ERROR (major))
+                  why = "no Kerberos acceptor credential for " + principal + " in " + path + ": "
+                        + TAO::SSLIOP::Kerberos::status_text (major, minor);
+                else
+                  {
+                    keys = std::make_shared<Acceptor_Keys> ();
+                    keys->cred = cred;
+                    keys->summary = summary;
+                  }
+              }
+          }
+        ::krb5_kt_close (ctx, dest);
+      }
+    ::krb5_free_context (ctx);
+    return keys;
+  }
+
+  /**
+   * The keys in force (R31).  The keytab file is read again only when it
+   * changes, and its keys replace the current ones only if they pass the
+   * keytab checks: a file that is bad, missing or half written is
+   * refused, audited once, and the last good keys stay in force.  A
+   * request in flight keeps the keys it started with.
+   */
+  TAO_SYNCH_MUTEX cred_lock;
+  std::shared_ptr<Acceptor_Keys> acceptor_keys;
+  std::string acceptor_config;
+  File_State acceptor_file;
+  File_State rejected_file;
+
+  std::shared_ptr<Acceptor_Keys>
   acceptor (std::string const &principal, std::string const &keytab, std::string const &rcache, std::string &why)
   {
-    ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, guard, cred_lock, GSS_C_NO_CREDENTIAL);
-    std::string const key = principal + '\n' + keytab + '\n' + rcache;
-    if (acceptor_cred != GSS_C_NO_CREDENTIAL && key == acceptor_key)
-      return acceptor_cred;
+    File_State const now = file_state (keytab);
+    std::string const config = principal + '\n' + keytab + '\n' + rcache;
+    std::shared_ptr<Acceptor_Keys> keys;
+    std::string event;          // audited after the lock is released
+    std::string event_text;
+    {
+      ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, guard, cred_lock, nullptr);
+      bool const same_config = acceptor_keys && config == acceptor_config;
+      if (same_config && (now == acceptor_file || now == rejected_file))
+        return acceptor_keys;
 
-    gss_name_t name = import_principal (principal, why);
-    if (name == GSS_C_NO_NAME)
-      return GSS_C_NO_CREDENTIAL;
-    gss_key_value_element_desc elements[2];
-    elements[0].key = "keytab";
-    elements[0].value = keytab.c_str ();
-    OM_uint32 count = 1;
-    if (!rcache.empty ())
-      {
-        elements[1].key = "rcache";
-        elements[1].value = rcache.c_str ();
-        count = 2;
-      }
-    gss_key_value_set_desc store = { count, elements };
-    gss_OID_set_desc mechs = { 1, &krb5_oid_desc };
-    OM_uint32 minor = 0;
-    gss_cred_id_t cred = GSS_C_NO_CREDENTIAL;
-    OM_uint32 const major =
-      ::gss_acquire_cred_from (&minor, name, GSS_C_INDEFINITE, &mechs, GSS_C_ACCEPT, &store, &cred, nullptr, nullptr);
-    ::gss_release_name (&minor, &name);
-    if (GSS_ERROR (major))
-      {
-        why = "no Kerberos acceptor credential for " + principal + " in " + keytab + ": "
-              + TAO::SSLIOP::Kerberos::status_text (major, minor);
-        return GSS_C_NO_CREDENTIAL;
-      }
-    if (acceptor_cred != GSS_C_NO_CREDENTIAL)
-      ::gss_release_cred (&minor, &acceptor_cred);
-    acceptor_cred = cred;
-    acceptor_key = key;
-    return cred;
+      bool const prod = TAO_Security_Mode::host ().mode == TAO_Security_Mode::MODE_PROD;
+      std::string error;
+      keys = load_keys (principal, keytab, rcache, prod, error);
+      if (keys && file_state (keytab) != now)
+        {
+          // Changed while it was read: try again at the next login.
+          keys.reset ();
+          if (same_config)
+            return acceptor_keys;
+          error = keytab + " changed while it was read";
+        }
+      if (keys)
+        {
+          if (same_config)
+            {
+              event = TAO::Security::Audit_Reason::KRB_KEYTAB_LOADED;
+              event_text = "the keytab changed; now in force: " + keys->summary;
+            }
+          acceptor_keys = keys;
+          acceptor_config = config;
+          acceptor_file = now;
+          rejected_file = File_State ();
+        }
+      else if (same_config)
+        {
+          rejected_file = now;
+          keys = acceptor_keys;
+          event = TAO::Security::Audit_Reason::KRB_KEYTAB_REJECTED;
+          event_text = error + "; the last good keys stay in force (" + acceptor_keys->summary + ")";
+        }
+      else
+        why = error;
+    }
+    if (!event.empty ())
+      TAO::Security::Audit_Logger::instance ()->write (
+        TAO::Security::Audit_Record ("config", event == TAO::Security::Audit_Reason::KRB_KEYTAB_LOADED, event.c_str ())
+          .field ("file", keytab)
+          .text (event_text.c_str ()));
+    return keys;
   }
 
   /// A verified PAC's logon information into @a info; a PAC that does
@@ -295,40 +633,12 @@ TAO::SSLIOP::Kerberos::check_keytab (std::string const &path,
                                      std::string const &principal,
                                      bool prod,
                                      std::string &summary,
-                                     std::string &error)
+                                     std::string &error,
+                                     size_t *versions)
 {
   ACE_stat st;
-  if (path.empty () || ACE_OS::stat (path.c_str (), &st) != 0)
-    {
-      error = "cannot read keytab " + path;
-      return false;
-    }
-  if ((st.st_mode & S_IFMT) != S_IFREG)
-    {
-      error = path + " is not a regular file";
-      return false;
-    }
-#if !defined (ACE_WIN32)
-  if (prod)
-    {
-      unsigned const mode = static_cast<unsigned> (st.st_mode & 0777);
-      if (mode != 0600 && mode != 0400)
-        {
-          char m[8];
-          ACE_OS::snprintf (m, sizeof m, "%04o", mode);
-          error = path + " is mode " + m + " (want 0600 or 0400)";
-          return false;
-        }
-      if (st.st_uid != ACE_OS::geteuid ())
-        {
-          error = path + " is not owned by the service account";
-          return false;
-        }
-    }
-#else
-  ACE_UNUSED_ARG (prod);
-#endif
-
+  if (!keytab_file_ok (path, prod, st, error))
+    return false;
 #if defined (TAO_HAS_GSSAPI)
   krb5_context ctx = nullptr;
   if (::krb5_init_context (&ctx) != 0)
@@ -336,82 +646,13 @@ TAO::SSLIOP::Kerberos::check_keytab (std::string const &path,
       error = "cannot initialise the Kerberos library";
       return false;
     }
-  krb5_keytab kt = nullptr;
-  std::string const name = "FILE:" + path;
-  krb5_error_code rc = ::krb5_kt_resolve (ctx, name.c_str (), &kt);
-  krb5_kt_cursor cursor;
-  if (rc == 0)
-    rc = ::krb5_kt_start_seq_get (ctx, kt, &cursor);
-  if (rc != 0)
-    {
-      char const *msg = ::krb5_get_error_message (ctx, rc);
-      error = "cannot read keytab " + path + ": " + msg;
-      ::krb5_free_error_message (ctx, msg);
-      if (kt != nullptr)
-        ::krb5_kt_close (ctx, kt);
-      ::krb5_free_context (ctx);
-      return false;
-    }
-  std::set<unsigned> kvnos;
-  std::set<std::string> types;
-  std::set<std::string> weak;
-  krb5_keytab_entry entry;
-  while (::krb5_kt_next_entry (ctx, kt, &entry, &cursor) == 0)
-    {
-      char *p = nullptr;
-      if (::krb5_unparse_name (ctx, entry.principal, &p) == 0)
-        {
-          if (principal == p)
-            {
-              char type[64] = "";
-              ::krb5_enctype_to_name (entry.key.enctype, TRUE, type, sizeof type);
-              kvnos.insert (static_cast<unsigned> (entry.vno));
-              switch (entry.key.enctype)
-                {
-                case ENCTYPE_DES_CBC_CRC:
-                case ENCTYPE_DES_CBC_MD4:
-                case ENCTYPE_DES_CBC_MD5:
-                case ENCTYPE_DES3_CBC_SHA1:
-                case ENCTYPE_ARCFOUR_HMAC:
-                case ENCTYPE_ARCFOUR_HMAC_EXP:
-                  weak.insert (type);
-                  break;
-                default:
-                  types.insert (type);
-                }
-            }
-          ::krb5_free_unparsed_name (ctx, p);
-        }
-      ::krb5_free_keytab_entry_contents (ctx, &entry);
-    }
-  ::krb5_kt_end_seq_get (ctx, kt, &cursor);
-  ::krb5_kt_close (ctx, kt);
+  bool const ok = read_keytab_keys (ctx, path, principal, nullptr, summary, error, versions);
   ::krb5_free_context (ctx);
-
-  auto join = [] (std::set<std::string> const &s) {
-    std::string out;
-    for (std::string const &x : s)
-      out += (out.empty () ? "" : ",") + x;
-    return out;
-  };
-  if (!weak.empty ())
-    {
-      error = path + " holds weak keys (" + join (weak) + ") for " + principal;
-      return false;
-    }
-  if (kvnos.empty ())
-    {
-      error = path + " holds no keys for " + principal;
-      return false;
-    }
-  std::string vs;
-  for (unsigned v : kvnos)
-    vs += (vs.empty () ? "" : ",") + std::to_string (v);
-  summary = principal + " key version(s) " + vs + " (" + join (types) + ")";
-  return true;
+  return ok;
 #else
   ACE_UNUSED_ARG (principal);
   ACE_UNUSED_ARG (summary);
+  ACE_UNUSED_ARG (versions);
   error = "SSLIOP was built without GSS-API (MPC feature gssapi)";
   return false;
 #endif /* TAO_HAS_GSSAPI */
@@ -430,9 +671,10 @@ TAO::SSLIOP::Kerberos::accept (std::string const &token,
                                Pac_Info *pac)
 {
 #if defined (TAO_HAS_GSSAPI)
-  gss_cred_id_t const cred = acceptor (principal, keytab, rcache, why);
-  if (cred == GSS_C_NO_CREDENTIAL)
+  std::shared_ptr<Acceptor_Keys> const keys = acceptor (principal, keytab, rcache, why);
+  if (!keys)
     return UNAVAILABLE;
+  gss_cred_id_t const cred = keys->cred;
 
   OM_uint32 minor = 0;
   gss_ctx_id_t ctx = GSS_C_NO_CONTEXT;

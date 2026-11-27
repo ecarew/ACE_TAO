@@ -223,7 +223,8 @@ my @refused2 = ('^SAS REPLY error ctx=0 major=2 minor=1 ', '^whoami EXCEPTION NO
 # --- csiv2_kerberos = supported, beside GSSUP ---------------------------------------------
 start_server ('krb');
 expect ('server starts with Kerberos and its keytab', slurp ($log),
-        ['SERVER READY', 'checks: \d+ ok, \d+ warn, 0 fail'], ['csiv2_kerberos']);
+        ['SERVER READY', 'checks: \d+ ok, \d+ warn, 0 fail'],
+        ['csiv2_kerberos: (?!\S+ holds \d+ key versions)']);   # the lab keytab gathers versions
 my $ior = scalar (`$iortool -k file://$d/alpha.ior 2>&1`);
 expect ('the reference lists Kerberos first (mechanism OID, service principal), then GSSUP', $ior,
         ['^    MECH 0 requires=0x[0-9a-f]+ transport=36$', '^      AS supports=0x40 requires=0x0 mech_octets=11$',
@@ -579,28 +580,71 @@ if (-s "$work/rc4.keytab") {
 # --- key rotation ---------------------------------------------------------------------------
 # Needs ACE_TAO_KRB_REKEY: a command that gives a lab service (its name is
 # appended) a new key version, kept in its keytab beside the old one
-# (CORBA lab/kdc.sh rekey).  A ticket issued before the rotation and one
-# issued after must both be served from the two-version keytab.
+# (CORBA lab/kdc.sh rekey).  The service keeps running: the new keytab
+# replaces its file the way a deployment tool would (written beside it,
+# then renamed over it), and tickets issued under the old and the new key
+# must both be served without a restart.
 if (my $rekey = $ENV{'ACE_TAO_KRB_REKEY'}) {
-    start_server ('krb', undef, 'prerot');
-    call ('poke', "krb5save:$principal:$bind:$work/old_key_token");
-    stop_server ();
-    my $r = `$rekey who 2>&1`;
-    copy ("$lab/keytabs/who.keytab", "$work/who.keytab") || die "copy keytab: $!";
-    chmod (0600, "$work/who.keytab");
-    my %kvno = map { $_ => 1 } (`$krb/klist -k $work/who.keytab 2>&1` =~ /^\s*(\d+) ace-tao\/who\./mg);
-    expect ('key rotation: the keytab holds the old and the new key version', scalar (keys %kvno) . " versions\n$r",
-            ['^([2-9]|\d\d+) versions']);
     start_server ('krb', undef, 'rot');
+    $out = call ('whoami', "krb5:$principal:$bind");
+    expect ('key rotation: before it, the service is served a ticket under the current key', $out,
+            ['^WHOAMI name=\S+alice\@LAB\.TEST']);
+    call ('poke', "krb5save:$principal:$bind:$work/old_key_token");
+    my $r = `$rekey who 2>&1`;
+    copy ("$lab/keytabs/who.keytab", "$work/who.keytab.new") || die "copy keytab: $!";
+    chmod (0600, "$work/who.keytab.new");
+    rename ("$work/who.keytab.new", "$work/who.keytab") || die "rename keytab: $!";
+    my %kvno = map { $_ => 1 } (`$krb/klist -k $work/who.keytab 2>&1` =~ /^\s*(\d+) ace-tao\/who\./mg);
+    expect ('  ... the new keytab holds the old and the new key version', scalar (keys %kvno) . " versions\n$r",
+            ['^([2-9]|\d\d+) versions']);
     $out = call ('whoami', "rawtoken:$work/old_key_token");
-    expect ('  ... a ticket issued under the old key is still served', $out, ['^WHOAMI name=\S+alice\@LAB\.TEST']);
+    expect ('  ... without a restart, a ticket issued under the old key is still served', $out,
+            ['^WHOAMI name=\S+alice\@LAB\.TEST']);
     {
         local $ENV{'KRB5CCNAME'} = "FILE:$work/ccache_rot";
         `$krb/kinit alice\@LAB.TEST < $lab/passwords/alice 2>&1`;
         $out = call ('whoami', "krb5:$principal:$bind");
     }
     expect ('  ... and so is one issued under the new key', $out, ['^WHOAMI name=\S+alice\@LAB\.TEST']);
+    expect ('  (audited: the changed keytab was checked and loaded)', log_now (),
+            ['reason="KRB_KEYTAB_LOADED" file="\S+who\.keytab"\] the keytab changed; now in force: ace-tao/who\.lab\.test\@LAB\.TEST key version']);
+
+    # The service holds its keys in memory: a replacement that fails the
+    # keytab checks is refused, audited once, and the last good keys stay.
+    my $good = slurp ("$work/who.keytab");
+    my $replace = sub {
+        my ($bytes, $mode) = @_;
+        spit ("$work/who.keytab.new", $bytes);
+        chmod ($mode, "$work/who.keytab.new");
+        rename ("$work/who.keytab.new", "$work/who.keytab") || die "rename keytab: $!";
+    };
+    $replace->(substr ($good, 0, int (length ($good) / 2)), 0600);
+    $out = call ('whoami', "krb5:$principal:$bind");
+    expect ('a half-written replacement keytab is refused, and logins go on with the last good keys', $out,
+            ['^WHOAMI name=\S+alice\@LAB\.TEST']);
+    expect ('  (audited once: KRB_KEYTAB_REJECTED, the last good keys stay in force)', log_now (),
+            ['reason="KRB_KEYTAB_REJECTED" file="\S+who\.keytab"\] .*the last good keys stay in force']);
+    call ('whoami', "krb5:$principal:$bind");
+    my $rejections = () = log_now () =~ /reason="KRB_KEYTAB_REJECTED"/g;
+    expect ('  ... and not again at the next login', "$rejections rejection(s)", ['^1 rejection']);
+    if ($prod) {
+        $replace->($good, 0644);
+        $out = call ('whoami', "krb5:$principal:$bind");
+        expect ('prod: a world-readable replacement keytab is refused, the last good keys serve', $out,
+                ['^WHOAMI name=\S+alice\@LAB\.TEST']);
+        expect ('  (audited: its mode)', log_now (), ['reason="KRB_KEYTAB_REJECTED" .*is mode 0644']);
+    }
+    $replace->($good, 0600);
+    $out = call ('whoami', "krb5:$principal:$bind");
+    my $loads = () = log_now () =~ /reason="KRB_KEYTAB_LOADED"/g;
+    expect ('a good keytab put back is loaded again', "$loads load(s)\n$out", ['^2 load', '^WHOAMI name=\S+alice\@LAB\.TEST']);
     stop_server ();
+    if (scalar (keys %kvno) - 1 > 4) {   # versions at startup, before this rotation
+        expect ('the self-check warns about a keytab with more than 4 key versions', slurp ($log),
+                ['WARN csiv2_kerberos: \S+who\.keytab holds \d+ key versions']);
+    }
+    print "--- rotation server log (KRB lines)\n" . join ("\n", grep { /KRB|keytab/i } split (/\n/, slurp ($log))) . "\n"
+        if $ENV{'KRB_ROTATION_DEBUG'};
 }
 else {
     print "skipped: key rotation check (set ACE_TAO_KRB_REKEY, e.g. to CORBA lab/kdc.sh rekey)\n";

@@ -1,6 +1,16 @@
 USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
 ====================================================
 
+. SSLIOP Kerberos: the service holds its keys in memory. The keytab file
+  is read again when it changes (renamed over, rewritten, re-permissioned)
+  and its keys replace the current ones only if it passes the keytab
+  checks; a bad, missing or half-written file is refused, audited once
+  (KRB_KEYTAB_REJECTED) and the last good keys stay in force. A good one
+  is audited as KRB_KEYTAB_LOADED. Key rotation (a gMSA, msktutil, kadmin
+  ktadd) needs no restart. The keytab check also refuses a file cut short
+  (the Kerberos library stops quietly at a truncated record), and the
+  self-check warns when the keytab holds more than four key versions.
+
 . CORBA::ORB_init() throws CORBA::BAD_PARAM when the ORB core's init()
   fails by returning -1 (e.g. -ORBLaneEndpoint followed by another option
   instead of its endpoints). It ignored that result and returned a nil

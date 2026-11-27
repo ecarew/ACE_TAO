@@ -99,6 +99,7 @@ namespace TAO
       constexpr char const KRB_FAILED[] = "KRB_FAILED";
       /// The Kerberos keytab or acceptor credential is unusable.
       constexpr char const KRB_KEYTAB_REJECTED[] = "KRB_KEYTAB_REJECTED";
+      constexpr char const KRB_KEYTAB_LOADED[] = "KRB_KEYTAB_LOADED";
       constexpr char const GSSUP_LOCKED[] = "GSSUP_LOCKED";
       constexpr char const GSSUP_RATE_LIMITED[] = "GSSUP_RATE_LIMITED";
       constexpr char const GSSUP_STORE_LOADED[] = "GSSUP_STORE_LOADED";

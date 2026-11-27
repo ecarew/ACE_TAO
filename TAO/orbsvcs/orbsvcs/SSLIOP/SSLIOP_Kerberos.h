@@ -88,13 +88,17 @@ namespace TAO
        * Checks the service keytab (R31): a regular file holding keys for
        * @a principal, none of them DES or RC4; in @a prod also mode 0600
        * or 0400 and owned by the effective user.  @a summary lists the key
-       * versions and encryption types; false with @a error otherwise.
+       * versions and encryption types, @a versions (if given) counts the
+       * versions; false with @a error otherwise.  A running service holds
+       * the keys in memory and loads a changed keytab only if it passes
+       * these checks, keeping the last good keys otherwise.
        */
       TAO_SSLIOP_Export bool check_keytab (std::string const &path,
                                            std::string const &principal,
                                            bool prod,
                                            std::string &summary,
-                                           std::string &error);
+                                           std::string &error,
+                                           size_t *versions = nullptr);
 
       /**
        * What an Active Directory ticket says about its client (Phase 3

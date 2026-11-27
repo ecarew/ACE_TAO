@@ -342,8 +342,10 @@ namespace
           {
             std::string summary;
             std::string error;
+            size_t versions = 0;
             if (!TAO::SSLIOP::Kerberos::check_keytab (keytab, principal,
-                                                      host.mode == TAO_Security_Mode::MODE_PROD, summary, error))
+                                                      host.mode == TAO_Security_Mode::MODE_PROD, summary, error,
+                                                      &versions))
               {
                 TAO::Security::Audit_Logger::instance ()->write (
                   TAO::Security::Audit_Record ("config", false, TAO::Security::Audit_Reason::KRB_KEYTAB_REJECTED)
@@ -355,6 +357,11 @@ namespace
               {
                 Self_Check::contribute ("csiv2_kerberos", Self_Check::CHECK_OK,
                                         ("Kerberos " + krb + ", " + summary + ", channel binding " + binding).c_str ());
+                if (versions > 4)
+                  Self_Check::contribute ("csiv2_kerberos", Self_Check::CHECK_WARN,
+                                          (keytab + " holds " + std::to_string (versions)
+                                           + " key versions: keep only those a ticket still within its lifetime"
+                                             " (renewals included) may use").c_str ());
                 if (binding != "required")
                   Self_Check::contribute ("csiv2_kerberos", Self_Check::CHECK_WARN,
                                           ("krb_channel_binding = " + binding
