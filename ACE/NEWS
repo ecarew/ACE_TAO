@@ -16,9 +16,12 @@ USER VISIBLE CHANGES BETWEEN ACE-8.0.8 and ACE-8.0.9
   the server), and it waited for the proactor's internal threads, which
   never exit.
 
-. ACE_Data_Block::size() no longer passes a null pointer to memcpy() when
-  growing an empty block that has no buffer yet (undefined behavior, reported
-  by UBSan when an ACE_InputCDR is built from an empty message block).
+. ACE_OS::memcpy(), memmove(), memcmp() and memset() do nothing for a length
+  of 0 (memcmp() returns 0). The C library requires valid pointers even
+  then, and ACE passed null ones: an empty ACE_Message_Block has no buffer,
+  and ACE_Data_Block::size(), ACE_Message_Block::copy() and
+  ACE_CDR::consolidate() copied from it (undefined behavior, reported by
+  UBSan when an ACE_InputCDR is built from an empty message block).
 
 . ACE_OS::ctime_r() builds with ACE_USES_WCHAR on platforms without
   ACE_HAS_REENTRANT_FUNCTIONS other than Windows (macOS among them): it

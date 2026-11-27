@@ -20,28 +20,33 @@ ACE_OS::memchr (void *s, int c, size_t len)
                                              len));
 }
 
+// The C library's mem* functions require valid pointers even for a length
+// of 0 (C17 7.24.1p2), and callers pass the buffer of an empty
+// ACE_Message_Block, which may be null.  A length of 0 returns before the
+// call.
+
 ACE_INLINE int
 ACE_OS::memcmp (const void *t, const void *s, size_t len)
 {
-  return ::memcmp (t, s, len);
+  return len == 0 ? 0 : ::memcmp (t, s, len);
 }
 
 ACE_INLINE void *
 ACE_OS::memcpy (void *t, const void *s, size_t len)
 {
-  return ::memcpy (t, s, len);
+  return len == 0 ? t : ::memcpy (t, s, len);
 }
 
 ACE_INLINE void *
 ACE_OS::memmove (void *t, const void *s, size_t len)
 {
-  return ::memmove (t, s, len);
+  return len == 0 ? t : ::memmove (t, s, len);
 }
 
 ACE_INLINE void *
 ACE_OS::memset (void *s, int c, size_t len)
 {
-  return ::memset (s, c, len);
+  return len == 0 ? s : ::memset (s, c, len);
 }
 
 ACE_INLINE char *

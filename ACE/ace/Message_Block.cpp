@@ -221,12 +221,9 @@ ACE_Data_Block::size (size_t length)
                             (char *) this->allocator_strategy_->malloc (length),
                             -1);
 
-      // An empty block may have no buffer at all (base_ null), and
-      // memcpy's source must not be null even for 0 bytes.
-      if (this->cur_size_ > 0)
-        ACE_OS::memcpy (buf,
-                        this->base_,
-                        this->cur_size_);
+      ACE_OS::memcpy (buf,
+                      this->base_,
+                      this->cur_size_);
       if (ACE_BIT_DISABLED (this->flags_,
                             ACE_Message_Block::DONT_DELETE))
         this->allocator_strategy_->free ((void *) this->base_);
