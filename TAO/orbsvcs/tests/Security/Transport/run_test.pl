@@ -63,6 +63,15 @@ spit ($acl, "version 0\nissued 2026-01-01T00:00:00Z\nallow * *\n");
 my $acl_out = `$tool --conf $conf access sign $sign --bump 2>&1`;
 die "access sign failed:\n$acl_out" unless $acl_out =~ /signed into/;
 
+# A signed list's times are real UTC times in the one layout: no signs or
+# spaces in the digits, no dates or hours that would be normalized.
+foreach my $t ('2026-02-31T00:00:00Z', '2026-01-01T24:00:00Z', '2026- 1-01T00:00:00Z', '+026-01-01T00:00:00Z') {
+    my $bad = "$work/badtime.acl";
+    spit ($bad, "version 1\nissued $t\nallow * *\n");
+    expect ("access sign refuses issued $t", `$tool --conf $conf access sign $sign --file $bad 2>&1`,
+            ['issued must be one time'], ['signed into']);
+}
+
 sub svc {
     my ($name, $cert, $key) = @_;
     my $opts = "-SSLAuthenticate SERVER_AND_CLIENT -SSLCAfile PEM:$dir/ca.pem";

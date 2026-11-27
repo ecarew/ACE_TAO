@@ -39,25 +39,44 @@ TAO::SSLIOP::Signed_File::trim (std::string const &s)
 bool
 TAO::SSLIOP::Signed_File::parse_time (std::string const &s, time_t &out)
 {
+  // Exactly YYYY-MM-DDTHH:MM:SSZ: digits where the layout has digits
+  // (sscanf's %2d also took signs and spaces).
+  static char const layout[] = "dddd-dd-ddTdd:dd:ddZ";
+  if (s.size () != sizeof layout - 1)
+    return false;
+  for (size_t i = 0; i < s.size (); ++i)
+    if (layout[i] == 'd' ? (s[i] < '0' || s[i] > '9') : s[i] != layout[i])
+      return false;
+  auto const num = [&s] (size_t at, size_t len)
+    {
+      int v = 0;
+      for (size_t i = at; i < at + len; ++i)
+        v = v * 10 + (s[i] - '0');
+      return v;
+    };
   struct tm tm_buf;
   ACE_OS::memset (&tm_buf, 0, sizeof tm_buf);
-  int y, mo, d, h, mi, se;
-  char z = 0;
-  if (s.size () != 20 || ::sscanf (s.c_str (), "%4d-%2d-%2dT%2d:%2d:%2d%c", &y, &mo, &d, &h, &mi, &se, &z) != 7
-      || z != 'Z')
-    return false;
-  tm_buf.tm_year = y - 1900;
-  tm_buf.tm_mon = mo - 1;
-  tm_buf.tm_mday = d;
-  tm_buf.tm_hour = h;
-  tm_buf.tm_min = mi;
-  tm_buf.tm_sec = se;
+  tm_buf.tm_year = num (0, 4) - 1900;
+  tm_buf.tm_mon = num (5, 2) - 1;
+  tm_buf.tm_mday = num (8, 2);
+  tm_buf.tm_hour = num (11, 2);
+  tm_buf.tm_min = num (14, 2);
+  tm_buf.tm_sec = num (17, 2);
+  struct tm const asked = tm_buf;
 #if defined (ACE_WIN32)
   out = ::_mkgmtime (&tm_buf);
 #else
   out = ::timegm (&tm_buf);
 #endif
-  return out != static_cast<time_t> (-1);
+  if (out == static_cast<time_t> (-1))
+    return false;
+  // timegm () quietly normalizes impossible dates (February 31st, hour 24):
+  // the time must convert back to the fields that were written.
+  struct tm back;
+  if (ACE_OS::gmtime_r (&out, &back) == nullptr)
+    return false;
+  return back.tm_year == asked.tm_year && back.tm_mon == asked.tm_mon && back.tm_mday == asked.tm_mday
+         && back.tm_hour == asked.tm_hour && back.tm_min == asked.tm_min && back.tm_sec == asked.tm_sec;
 }
 
 std::string

@@ -286,9 +286,20 @@ namespace TAO
       std::string const rate = host.get ("audit_rate");
       if (!rate.empty ())
         {
+          // COUNT/SECONDS, each plain decimal digits: sscanf's %u took
+          // "-1" (wrapping to UINT_MAX, no limit at all) and trailing text.
+          auto const number = [] (std::string const &t, unsigned int &out)
+            {
+              if (t.empty () || t.size () > 9 || t.find_first_not_of ("0123456789") != std::string::npos)
+                return false;
+              out = static_cast<unsigned int> (std::stoul (t));
+              return true;
+            };
+          std::string::size_type const slash = rate.find ('/');
           unsigned int count = 0;
           unsigned int secs = 0;
-          if (::sscanf (rate.c_str (), "%u/%u", &count, &secs) == 2 && secs > 0)
+          if (slash != std::string::npos && number (rate.substr (0, slash), count)
+              && number (rate.substr (slash + 1), secs) && secs > 0)
             {
               opts.rate_count = count;
               opts.rate_window = ACE_Time_Value (secs);

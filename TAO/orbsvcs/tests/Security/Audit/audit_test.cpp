@@ -480,6 +480,24 @@ ACE_TMAIN (int argc, ACE_TCHAR *argv[])
 
       Audit_Logger::Options const conf = Audit_Logger::options_from_config ("does-not-exist.conf");
       check (conf.mode == "none" && conf.rate_count == 20, "missing config file gives defaults");
+
+      // audit_rate is COUNT/SECONDS in plain digits; anything else keeps
+      // the default (a "-1" once wrapped to UINT_MAX: no limit at all).
+      {
+        char const *const rate_conf = "audit_rate_test.conf";
+        auto const rate_of = [rate_conf] (char const *value)
+          {
+            FILE *const fp = ACE_OS::fopen (rate_conf, ACE_TEXT ("w"));
+            ACE_OS::fprintf (fp, "audit_rate = %s\n", value);
+            ACE_OS::fclose (fp);
+            Audit_Logger::Options const o = Audit_Logger::options_from_config (rate_conf);
+            ACE_OS::unlink (rate_conf);
+            return std::to_string (o.rate_count) + "/" + std::to_string (o.rate_window.sec ());
+          };
+        check (rate_of ("7/30") == "7/30", "audit_rate 7/30 is read", rate_of ("7/30"));
+        for (char const *bad : {"-1/60", "10/60x", "10/0", "10", "/60", "10/ 60", "+5/60"})
+          check (rate_of (bad) == "20/60", (std::string ("audit_rate ") + bad + " is refused").c_str (), rate_of (bad));
+      }
     }
   catch (CORBA::Exception const &ex)
     {
