@@ -406,6 +406,9 @@ role carol@lab.test writer via=spiffe://ace-tao.test/portal
 role dave@lab.test admin,writer
 role anonymous reader
 role CN=legacy gateway,O=Example reader
+role sid:S-1-5-21-1-2-3-1106 admin maxage=15m
+role grace@lab.test admin maxage=1h
+role spiffe://ace-tao.test/console admin maxage=1h
 EOT
 $o = tool ("roles sign $sign --file $work/t3_roles.draft --dir $t3");
 expect ('a role map with groups, SIDs, conditions and anonymous signs cleanly', $o, ['table roles version \d+ .*signed into']);
@@ -451,7 +454,23 @@ expect ('anonymous: only the explicit anonymous line gives roles (R37)',
         ['^ALLOWED: anonymous whoami ', '^  roles from: anonymous$', '^REFUSED: anonymous poke ']);
 expect ('a subject DN with blanks is a principal', t3 ("--principal 'CN=legacy gateway,O=Example'", 'whoami'),
         ['^ALLOWED: CN=legacy gateway,O=Example whoami ']);
+expect ('maxage=15m: an AD group role holds for a Kerberos login 10 minutes old',
+        t3 ('--principal frank@AD.LAB.TEST --sids S-1-5-21-1-2-3-1106 --krb-login-age 600', 'shutdown'),
+        ['^ALLOWED: frank\@AD\.LAB\.TEST shutdown ', '^  roles from: sid:S-1-5-21-1-2-3-1106$']);
+expect ('  ... but not for one 20 minutes old (log in again for a fresh PAC)',
+        t3 ('--principal frank@AD.LAB.TEST --sids S-1-5-21-1-2-3-1106 --krb-login-age 1200', 'shutdown'),
+        ['^REFUSED: frank\@AD\.LAB\.TEST shutdown ', 'the caller has no role']);
+expect ('maxage=: a GSSUP login (checked on the request) is current',
+        t3 ('--principal grace@lab.test', 'shutdown'), ['^ALLOWED: grace\@lab\.test shutdown ']);
+expect ('  ... an asserted caller has no login of its own, so not',
+        t3 ('--principal alice@lab.test --asserted grace@lab.test --via alice@lab.test', 'shutdown'),
+        ['^REFUSED: grace\@lab\.test shutdown ', 'the caller has no role']);
+expect ('  ... nor a certificate alone', t3 ('--principal spiffe://ace-tao.test/console', 'shutdown'),
+        ['^REFUSED: ', 'the caller has no role']);
 foreach my $bad (["role anonymous reader factors=tls+gssup\n", 'an anonymous caller proves no factors'],
+                 ["role anonymous reader maxage=1h\n", 'an anonymous caller has no login to be recent'],
+                 ["role alice\@lab.test reader maxage=0\n", 'maxage= takes one duration'],
+                 ["role alice\@lab.test reader maxage=31d\n", 'maxage= takes one duration'],
                  ["role alice\@lab.test reader factors=tls+krb5\n", 'factors= takes tls\+gssup'],
                  ["role sid:S-1-x reader\n", 'bad SID'],
                  ["group 9ops bob\@lab.test\n", 'expected "group NAME PRINCIPAL"'],

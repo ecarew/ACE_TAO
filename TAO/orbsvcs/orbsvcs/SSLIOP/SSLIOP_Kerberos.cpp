@@ -658,6 +658,33 @@ TAO::SSLIOP::Kerberos::check_keytab (std::string const &path,
 #endif /* TAO_HAS_GSSAPI */
 }
 
+long
+TAO::SSLIOP::Kerberos::parse_duration (std::string const &text, long max)
+{
+  if (text.empty () || text.size () > 12)
+    return -1;
+  size_t digits = 0;
+  while (digits < text.size () && text[digits] >= '0' && text[digits] <= '9')
+    ++digits;
+  if (digits == 0 || digits + 1 < text.size ())
+    return -1;
+  long long n = 0;
+  for (size_t i = 0; i < digits; ++i)
+    n = n * 10 + (text[i] - '0');
+  long long unit = 1;
+  if (digits < text.size ())
+    switch (text[digits])
+      {
+      case 's': unit = 1; break;
+      case 'm': unit = 60; break;
+      case 'h': unit = 3600; break;
+      case 'd': unit = 86400; break;
+      default: return -1;
+      }
+  long long const seconds = n * unit;
+  return seconds <= 0 || seconds > max ? -1 : static_cast<long> (seconds);
+}
+
 TAO::SSLIOP::Kerberos::Accept_Status
 TAO::SSLIOP::Kerberos::accept (std::string const &token,
                                std::string const &binding,
@@ -668,7 +695,8 @@ TAO::SSLIOP::Kerberos::accept (std::string const &token,
                                std::string &client,
                                std::string &reply,
                                std::string &why,
-                               Pac_Info *pac)
+                               Pac_Info *pac,
+                               long long *auth_time)
 {
 #if defined (TAO_HAS_GSSAPI)
   std::shared_ptr<Acceptor_Keys> const keys = acceptor (principal, keytab, rcache, why);
@@ -709,6 +737,10 @@ TAO::SSLIOP::Kerberos::accept (std::string const &token,
           ::gss_release_buffer (&m2, &name);
           if (pac != nullptr)
             read_pac (src, *pac);
+          krb5_timestamp t = 0;
+          OM_uint32 m4 = 0;
+          if (auth_time != nullptr && !GSS_ERROR (::gsskrb5_extract_authtime_from_sec_context (&m4, ctx, &t)))
+            *auth_time = static_cast<long long> (static_cast<std::uint32_t> (t));
         }
     }
   else if (major == GSS_S_CONTINUE_NEEDED)
@@ -744,6 +776,7 @@ TAO::SSLIOP::Kerberos::accept (std::string const &token,
   ACE_UNUSED_ARG (client);
   ACE_UNUSED_ARG (reply);
   ACE_UNUSED_ARG (pac);
+  ACE_UNUSED_ARG (auth_time);
   why = "SSLIOP was built without GSS-API (MPC feature gssapi)";
   return UNAVAILABLE;
 #endif /* TAO_HAS_GSSAPI */

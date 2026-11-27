@@ -52,8 +52,11 @@
  *  allow_anonymous_assertion, csiv2_kerberos (off, supported, required),
  *  krb_principal (the service principal, e.g.
  *  ace-tao/naming.lab.test@LAB.TEST), krb_keytab, krb_rcache (default:
- *  the library's replay cache) and krb_channel_binding (off, supported,
- *  required; default required).
+ *  the library's replay cache), krb_channel_binding (off, supported,
+ *  required; default required) and krb_max_ticket_age (a duration, e.g.
+ *  1h: a ticket whose KDC login, its authtime, is older is refused, so
+ *  the user returns with a fresh PAC; default no limit, which prod warns
+ *  about).
  */
 //=============================================================================
 
@@ -101,6 +104,7 @@ namespace TAO
         std::string krb_keytab;    ///< krb_keytab
         std::string krb_rcache;    ///< krb_rcache (empty: the library's default)
         int krb_binding = 2;       ///< krb_channel_binding: 0 off, 1 supported, 2 required
+        long krb_max_age = 0;      ///< krb_max_ticket_age in seconds; 0: no limit
         /// Client side: assert the current request's caller on calls a
         /// servant makes (csiv2_assert_caller = on).
         bool assert_caller = false;

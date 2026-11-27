@@ -99,6 +99,12 @@ namespace TAO
       /// logon information); it also belongs to @c authenticated.
       std::string user_sid;
 
+      /// When @c authenticated logged in (seconds since the epoch): a
+      /// Kerberos ticket's authtime (its first KDC login, kept through
+      /// renewals), the time of the request for a GSSUP login; 0 for a
+      /// certificate alone.
+      long long auth_time = 0;
+
       /// Groups the GSSUP verifier gives @c authenticated (the store
       /// line's groups=, Phase 3 T3).  Like @c groups, they belong to
       /// the authenticated login, never to an asserted caller.

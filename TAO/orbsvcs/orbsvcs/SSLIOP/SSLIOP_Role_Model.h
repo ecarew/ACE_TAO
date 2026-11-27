@@ -174,6 +174,11 @@ namespace TAO
         std::set<std::string> roles;
         std::string via;          ///< asserter required ("*": any); empty: none
         bool two_factor = false;  ///< factors=tls+gssup
+        /// maxage=DURATION in seconds (0: none): held only by a caller
+        /// who logged in that recently, with Kerberos (the ticket's
+        /// authtime) or with GSSUP on the request; never on a certificate
+        /// alone or by an asserted caller.
+        long max_age = 0;
         unsigned line = 0;
       };
 

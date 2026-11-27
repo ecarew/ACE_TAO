@@ -11,6 +11,7 @@
 #include "tao/Security_Mode.h"
 
 #include "ace/OS_NS_string.h"
+#include "ace/OS_NS_time.h"
 
 #include "ace/SSL/SSL_Context.h"
 
@@ -480,6 +481,10 @@ SAS_Target::config ()
     r.krb_keytab = h.get ("krb_keytab");
     r.krb_rcache = h.get ("krb_rcache");
     r.krb_binding = level_of (h.get ("krb_channel_binding", "required"));
+    // A value the self-check refuses gives no limit here; prod does not
+    // start with it.
+    long const age = TAO::SSLIOP::Kerberos::parse_duration (h.get ("krb_max_ticket_age"), 30L * 86400);
+    r.krb_max_age = age > 0 ? age : 0;
     return r;
   } ();
   return c;
@@ -751,19 +756,41 @@ SAS_Target::process (PortableInterceptor::ServerRequestInfo_ptr ri,
       std::string client;
       std::string reply;
       std::string why;
+      long long auth_time = 0;
       TAO::SSLIOP::Kerberos::Accept_Status const st = TAO::SSLIOP::Kerberos::accept (
-        token, binding, c.krb_principal, c.krb_keytab, c.krb_rcache, c.krb_binding == 2, client, reply, why, &pac);
+        token, binding, c.krb_principal, c.krb_keytab, c.krb_rcache, c.krb_binding == 2, client, reply, why, &pac,
+        &auth_time);
       if (st != TAO::SSLIOP::Kerberos::ACCEPTED)
         refuse (ri, caller, operation, id, 1, Reason::KRB_FAILED, why.c_str ());
+      // krb_max_ticket_age: the user's KDC login (the ticket's authtime,
+      // kept through renewals) must be recent, so a fresh login brings
+      // the account's current groups from AD in a new PAC.
+      if (c.krb_max_age > 0)
+        {
+          long long const age = static_cast<long long> (ACE_OS::time (nullptr)) - auth_time;
+          if (auth_time <= 0 || age > c.krb_max_age)
+            {
+              refuse (ri, caller, operation, id, 1, Reason::KRB_LOGIN_TOO_OLD,
+                      (auth_time <= 0 ? std::string ("the ticket's login time is unknown")
+                                      : "the ticket's login is " + std::to_string (age) + " s old")
+                        .append (", over krb_max_ticket_age (" + std::to_string (c.krb_max_age)
+                                 + " s): log in to the KDC again").c_str (),
+                      client);
+            }
+        }
       caller.authenticated = client;
       caller.authenticated_mech = "krb5";
+      caller.auth_time = auth_time;
       // R30: AD groups from the ticket's PAC, trusted only once it
       // verified with the ticket; no directory is asked.
-      if (pac.verified && !pac.groups.empty ())
+      if (pac.verified)
         {
-          caller.groups = pac.groups;
-          caller.groups_authority = TAO::SSLIOP::Kerberos::realm_of (client);
           caller.user_sid = pac.user_sid;
+          if (!pac.groups.empty ())
+            {
+              caller.groups = pac.groups;
+              caller.groups_authority = TAO::SSLIOP::Kerberos::realm_of (client);
+            }
         }
       final_token = reply;
       mech_name = "krb5";
@@ -836,6 +863,7 @@ SAS_Target::process (PortableInterceptor::ServerRequestInfo_ptr ri,
         }
       caller.authenticated = quote_scoped (name) + c.target;
       caller.authenticated_mech = "gssup";
+      caller.auth_time = static_cast<long long> (ACE_OS::time (nullptr));
       // Store groups for the role map's group:NAME lines (Phase 3 T3).
       caller.login_groups = v->groups (name);
       mech_name = "gssup";

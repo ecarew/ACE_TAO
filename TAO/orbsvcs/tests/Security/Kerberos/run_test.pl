@@ -162,7 +162,7 @@ my $base = "mode = " . ($prod ? "prod" : "test") . "\naudit_sink = stderr\ntime_
          . "trust_anchor_sha256 = $fp\naccess_list = $acl\naccess_list_signer = $certs/signer_pub.pem\n"
          . "access_list_signer_sha256 = $pin\naccess_default = deny\naudit_grants = on\n"
          . "csiv2 = supported\ngssup_target = \@lab.test\ncsiv2_gssup = supported\n"
-         . "krb_principal = $principal\nkrb_rcache = file2:$work/rcache\n";
+         . "krb_principal = $principal\nkrb_rcache = file2:$work/rcache\nkrb_max_ticket_age = 1h\n";
 my %conf = (krb      => $base . "csiv2_kerberos = supported\nkrb_keytab = $work/who.keytab\n",
             loose    => $base . "csiv2_kerberos = supported\nkrb_keytab = $work/who.keytab\nkrb_channel_binding = supported\n",
             required => $base . "csiv2_kerberos = required\nkrb_keytab = $work/who.keytab\n",
@@ -324,6 +324,37 @@ stop_server ();
     foreach my $k (@keys) { push @leaks, 'a keytab key' if $text =~ /$k/i; }
     expect ('at ORB debug level 10 no log line holds the password or a keytab key',
             @leaks ? join (', ', @leaks) : 'clean', ['^clean$']);
+}
+
+# --- krb_max_ticket_age: the KDC login must be recent ------------------------------------------
+# The ticket's authtime (its first KDC login, kept through renewals) must
+# be within the limit, so a user comes back with a fresh PAC (current AD
+# groups).  15 s here; prod would use, say, 1h.
+($conf{age} = $conf{krb}) =~ s/^krb_max_ticket_age = .*$/krb_max_ticket_age = 15/m;
+spit ("$work/age.conf", $conf{age}); chmod (0600, "$work/age.conf");
+start_server ('age');
+{
+    local $ENV{'KRB5CCNAME'} = "FILE:$work/ccache_age";
+    `$krb/kinit alice\@LAB.TEST < $lab/passwords/alice 2>&1`;
+    $out = call ('whoami', "krb5:$principal:$bind");
+    expect ('krb_max_ticket_age: a ticket from a recent KDC login is served', $out, ['^WHOAMI name=\S+alice\@LAB\.TEST']);
+    sleep (16);
+    $out = call ('whoami', "krb5:$principal:$bind");
+    expect ('  ... the same ticket, its login now older than the limit, is refused', $out, [@refused1], ['^WHOAMI']);
+    expect ('  (audited: KRB_LOGIN_TOO_OLD with the age and the limit)', log_now (),
+            ['reason="KRB_LOGIN_TOO_OLD" .*user="alice\@LAB\.TEST".*\] the ticket\'s login is \d+ s old, over krb_max_ticket_age \(15 s\)']);
+    `$krb/kinit alice\@LAB.TEST < $lab/passwords/alice 2>&1`;
+    $out = call ('whoami', "krb5:$principal:$bind");
+    expect ('  ... and after a new KDC login the user is served again', $out, ['^WHOAMI name=\S+alice\@LAB\.TEST']);
+}
+stop_server ('gssup:alice:wonderland');   # the test's main ticket is older than 15 s
+if ($prod) {
+    ($conf{noage} = $conf{krb}) =~ s/^krb_max_ticket_age = .*\n//m;
+    spit ("$work/noage.conf", $conf{noage}); chmod (0600, "$work/noage.conf");
+    start_server ('noage');
+    expect ('prod: without krb_max_ticket_age the self-check warns', slurp ($log),
+            ['WARN csiv2_kerberos: krb_max_ticket_age is not set']);
+    stop_server ();
 }
 
 # --- the deny-list names principals ---------------------------------------------------------

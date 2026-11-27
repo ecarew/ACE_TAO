@@ -5,7 +5,7 @@
 //   KIND sign  --key SPEC [--password-file F] --file DRAFT [--dir DIR]
 //   KIND check [--dir DIR] [--signer PEM]
 //   roles test --principal P --interface ID --op OP [--object PATH] [--dir DIR] [--signer PEM]
-//              [--cert NAME] [--groups G,...] [--sids SID,...]
+//              [--cert NAME] [--groups G,...] [--sids SID,...] [--krb-login-age SECONDS]
 //              [--asserted NAME --via ASSERTER [--cap ROLE,...]] [--anonymous]
 //   roles import [--access LIST] [--out DRAFT]
 //
@@ -25,7 +25,9 @@
 // denies, which a service checks first, are not consulted.  P is a SPIFFE
 // ID or subject DN (a certificate) or user@realm (a login); --cert adds
 // the certificate a login came over (for factors=tls+gssup), --groups the
-// login's store groups, --sids its ticket's group SIDs.  --asserted makes
+// login's store groups, --sids its ticket's group SIDs; --krb-login-age
+// makes the login Kerberos, its KDC login (authtime) that long ago (for
+// maxage=; a GSSUP login is current).  --asserted makes
 // NAME the caller, asserted by --via (P is then the asserter), and --cap
 // is that asserter's roles= from the asserter list.  --anonymous asks
 // about a caller with no identity.
@@ -49,6 +51,7 @@
 #include "ace/OS_NS_stdio.h"
 #include "ace/OS_NS_stdlib.h"
 #include "ace/OS_NS_string.h"
+#include "ace/OS_NS_time.h"
 #include "ace/OS_NS_ctype.h"
 #include "ace/OS_NS_sys_stat.h"
 
@@ -74,7 +77,7 @@ namespace
     "usage: ace-tao-setup rights|grants|roles sign  --key SPEC [--password-file F] --file DRAFT [--dir DIR]\n"
     "       ace-tao-setup rights|grants|roles check [--dir DIR] [--signer PEM]\n"
     "       ace-tao-setup roles test --principal P --interface ID --op OP [--object PATH] [--dir DIR]\n"
-    "            [--cert NAME] [--groups G,...] [--sids SID,...]\n"
+    "            [--cert NAME] [--groups G,...] [--sids SID,...] [--krb-login-age SECONDS]\n"
     "            [--asserted NAME --via ASSERTER [--cap ROLE,...]] [--anonymous]\n"
     "       ace-tao-setup roles import [--access LIST] [--out DRAFT]\n"
     "  sign gives DRAFT the next version and today's date and writes DIR/KIND-YYYY-MM-DD[.N].txt\n"
@@ -112,7 +115,7 @@ namespace
   {
     std::string file, key, password_file, signer, dir;
     std::string principal, interface_id, op, object;
-    std::string cert, groups, sids, asserted, via, cap, access, out;
+    std::string cert, groups, sids, krb_login_age, asserted, via, cap, access, out;
     bool has_cap = false;
     bool anonymous = false;
   };
@@ -147,6 +150,7 @@ namespace
         else if (a == "--cert" && more) o.cert = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
         else if (a == "--groups" && more) o.groups = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
         else if (a == "--sids" && more) o.sids = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
+        else if (a == "--krb-login-age" && more) o.krb_login_age = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
         else if (a == "--asserted" && more) o.asserted = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
         else if (a == "--via" && more) o.via = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
         else if (a == "--cap" && more) { o.cap = ACE_TEXT_ALWAYS_CHAR (argv[++i]); o.has_cap = true; }
@@ -375,6 +379,12 @@ namespace
           {
             caller.authenticated = o.principal;
             caller.authenticated_mech = "gssup";
+            caller.auth_time = static_cast<long long> (ACE_OS::time (nullptr));
+            if (!o.krb_login_age.empty ())
+              {
+                caller.authenticated_mech = "krb5";
+                caller.auth_time -= ACE_OS::atoi (o.krb_login_age.c_str ());
+              }
           }
       }
     if (!o.cert.empty ())

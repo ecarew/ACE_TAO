@@ -1,4 +1,6 @@
 #include "orbsvcs/SSLIOP/SSLIOP_Role_Model.h"
+#include "ace/OS_NS_time.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Kerberos.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Asserter_List.h"
 
 #include "tao/Security_Mode.h"
@@ -281,11 +283,11 @@ TAO::SSLIOP::Role_Model::parse (Policy_Tables::Table const &t, Role_Map &out, st
           out.sid_names[w[1]] = rest_after (w, 2);
           continue;
         }
-      // role WHO ROLE[,ROLE...] [via=ASSERTER] [factors=tls+gssup]
+      // role WHO ROLE[,ROLE...] [via=ASSERTER] [factors=tls+gssup] [maxage=DURATION]
       if (w[0] != "role" || w.size () < 3)
         {
-          error = at (l.first, "expected \"role WHO ROLE[,ROLE...] [via=ASSERTER] [factors=tls+gssup]\", "
-                               "\"group NAME PRINCIPAL\" or \"sid SID NAME\"");
+          error = at (l.first, "expected \"role WHO ROLE[,ROLE...] [via=ASSERTER] [factors=tls+gssup] "
+                               "[maxage=DURATION]\", \"group NAME PRINCIPAL\" or \"sid SID NAME\"");
           return false;
         }
       Role_Line rl;
@@ -312,6 +314,16 @@ TAO::SSLIOP::Role_Model::parse (Policy_Tables::Table const &t, Role_Map &out, st
                 }
               rl.two_factor = true;
             }
+          else if (o.compare (0, 7, "maxage=") == 0)
+            {
+              long const age = TAO::SSLIOP::Kerberos::parse_duration (o.substr (7), 30L * 86400);
+              if (age <= 0 || rl.max_age != 0)
+                {
+                  error = at (l.first, "maxage= takes one duration up to 30d (90, 15m, 1h, 1d)");
+                  return false;
+                }
+              rl.max_age = age;
+            }
           else
             break;
           --last;
@@ -336,6 +348,11 @@ TAO::SSLIOP::Role_Model::parse (Policy_Tables::Table const &t, Role_Map &out, st
       if (who == "anonymous" && rl.two_factor)
         {
           error = at (l.first, "an anonymous caller proves no factors");
+          return false;
+        }
+      if (who == "anonymous" && rl.max_age != 0)
+        {
+          error = at (l.first, "an anonymous caller has no login to be recent");
           return false;
         }
       std::istringstream in (role_list);
@@ -389,6 +406,10 @@ TAO::SSLIOP::Role_Model::roles_of (Role_Map const &roles, TAO::Security::Caller 
     }
 
   bool const two_factor = !asserted && caller.authenticated_mech == "gssup" && !caller.transport ().empty ();
+  // How long ago the caller logged in (maxage=): only a login of its own.
+  long long const login_age = !asserted && caller.auth_time > 0 && !caller.authenticated.empty ()
+                              ? static_cast<long long> (ACE_OS::time (nullptr)) - caller.auth_time
+                              : -1;
   std::set<std::string> out;
   for (std::string const &k : keys)
     {
@@ -401,6 +422,8 @@ TAO::SSLIOP::Role_Model::roles_of (Role_Map const &roles, TAO::Security::Caller 
           if (!rl.via.empty () && !(asserted && !caller.asserter.empty () && (rl.via == "*" || rl.via == caller.asserter)))
             continue;
           if (rl.two_factor && !two_factor)
+            continue;
+          if (rl.max_age != 0 && (login_age < 0 || login_age > rl.max_age))
             continue;
           out.insert (rl.roles.begin (), rl.roles.end ());
           used = true;

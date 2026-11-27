@@ -151,6 +151,12 @@ namespace TAO
        * If @a pac is not null it gets the ticket's PAC logon information;
        * its groups are filled only when the PAC verified with the ticket.
        */
+      /**
+       * A duration: seconds, or a number with s, m, h or d ("90", "15m",
+       * "1h").  -1 if @a text is not one, is 0, or exceeds @a max seconds.
+       */
+      TAO_SSLIOP_Export long parse_duration (std::string const &text, long max);
+
       TAO_SSLIOP_Export Accept_Status accept (std::string const &token,
                                               std::string const &binding,
                                               std::string const &principal,
@@ -160,7 +166,8 @@ namespace TAO
                                               std::string &client,
                                               std::string &reply,
                                               std::string &why,
-                                              Pac_Info *pac = nullptr);
+                                              Pac_Info *pac = nullptr,
+                                              long long *auth_time = nullptr);
 
       /**
        * Makes a Kerberos initial context token for service @a principal

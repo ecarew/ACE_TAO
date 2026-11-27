@@ -1,6 +1,16 @@
 USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
 ====================================================
 
+. SSLIOP Kerberos: krb_max_ticket_age (e.g. 1h) refuses a ticket whose
+  KDC login (its authtime, kept through renewals) is older, audited as
+  KRB_LOGIN_TOO_OLD, so a user comes back with a fresh PAC carrying the
+  account's current Active Directory groups. The role map takes
+  maxage=DURATION on a role line: the role is held only by a caller who
+  logged in that recently (a Kerberos ticket's authtime, or a GSSUP login
+  on the request), never on a certificate alone or by an asserted caller.
+  In prod the self-check warns when Kerberos is on without
+  krb_max_ticket_age. ace-tao-setup roles test takes --krb-login-age.
+
 . SSLIOP deny-list: principal NAME@REALM and sid S-1-... entries. A
   listed principal (a Kerberos user or service, a GSSUP login, an asserted
   name or its asserter; case-insensitive) or SID (the account or any group

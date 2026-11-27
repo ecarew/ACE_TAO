@@ -338,6 +338,11 @@ namespace
         else if (krb != "off" && binding != "off" && binding != "supported" && binding != "required")
           Self_Check::contribute ("csiv2_kerberos", bad,
                                   ("krb_channel_binding must be off, supported or required, not " + binding).c_str ());
+        else if (krb != "off" && !host.get ("krb_max_ticket_age").empty ()
+                 && TAO::SSLIOP::Kerberos::parse_duration (host.get ("krb_max_ticket_age"), 30L * 86400) <= 0)
+          Self_Check::contribute ("csiv2_kerberos", bad,
+                                  ("krb_max_ticket_age must be a duration up to 30d (3600, 15m, 1h), not "
+                                   + host.get ("krb_max_ticket_age")).c_str ());
         else if (krb != "off")
           {
             std::string summary;
@@ -357,6 +362,11 @@ namespace
               {
                 Self_Check::contribute ("csiv2_kerberos", Self_Check::CHECK_OK,
                                         ("Kerberos " + krb + ", " + summary + ", channel binding " + binding).c_str ());
+                if (host.mode == TAO_Security_Mode::MODE_PROD && host.get ("krb_max_ticket_age").empty ())
+                  Self_Check::contribute ("csiv2_kerberos", Self_Check::CHECK_WARN,
+                                          "krb_max_ticket_age is not set: a change to a user's AD groups takes effect"
+                                          " only at the user's next KDC login, as late as the end of a renewable"
+                                          " ticket's life (set it, e.g. 1h)");
                 if (versions > 4)
                   Self_Check::contribute ("csiv2_kerberos", Self_Check::CHECK_WARN,
                                           (keytab + " holds " + std::to_string (versions)
