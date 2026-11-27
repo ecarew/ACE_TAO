@@ -33,22 +33,44 @@
 #include "ace/Reactor.h"
 #include "ace/Thread_Manager.h"
 #include "ace/INET_Addr.h"
+#include "ace/SOCK_Acceptor.h"
+#include "ace/SOCK_Connector.h"
+#include "ace/SOCK_Stream.h"
+#include "ace/Thread_Mutex.h"
+#include "ace/Guard_T.h"
+#include "ace/OS_NS_sys_socket.h"
+#include "ace/OS_NS_sys_time.h"
 #include "ace/SSL/SSL_Asynch_Stream.h"
-#include "ace/SSL/SSL_SOCK_Connector.h"
-#include "ace/SSL/SSL_SOCK_Acceptor.h"
-#include "ace/SSL/SSL_SOCK_Stream.h"
+#include <atomic>
 
 #if defined (ACE_HAS_THREADS) && (defined (ACE_WIN32) || (defined (ACE_HAS_AIO_CALLS)))
   // This only works on Win32 platforms and on Unix platforms
   // supporting POSIX aio calls.
 
+//FUZZ: disable check_for_ACE_Guard
+// The handlers pass the guard ACE_GUARD made to their helpers.
+using Lock_Guard = ACE_Guard<ACE_Thread_Mutex>;
+//FUZZ: enable check_for_ACE_Guard
+
+// Handlers still alive; run_main waits for this to drop to 0.
+static std::atomic<long> live_handlers (0);
+
+// A handler may delete itself only when its stream says so (close()
+// returns 0, after the stream's handle_wakeup) AND the completion of its
+// own last read or write has arrived: closing the stream cancels that
+// operation by posting its completion, and with several proactor threads
+// the close notification can run before it.  The completion still refers
+// to the handler's message block, so deleting the handler on the wakeup
+// alone is a use-after-free.
 class Client_Handler : public ACE_Handler
 {
 public:
   Client_Handler ()
     : msgs_sent_ (0),
       stream_ (ACE_SSL_Asynch_Stream::ST_CLIENT),
-      block_ (1024) {}
+      block_ (1024),
+      io_pending_ (false),
+      closing_ (false) { ++live_handlers; }
   ~Client_Handler ();
 
   //FUZZ: disable check_for_lack_ACE_OS
@@ -57,11 +79,22 @@ public:
 
 private:
   virtual void handle_write_stream (const ACE_Asynch_Write_Stream::Result &result);
+  virtual void handle_read_stream (const ACE_Asynch_Read_Stream::Result &result);
+  virtual void handle_wakeup ();
+
+  /// Starts closing the stream (call with lock_ held); may delete this.
+  void finish (Lock_Guard &guard);
+  /// Deletes this if it is closing, the stream is closed and no write is
+  /// outstanding (call with lock_ held).
+  void check_done (Lock_Guard &guard);
 
 private:
   size_t                  msgs_sent_;
   ACE_SSL_Asynch_Stream   stream_;
   ACE_Message_Block       block_;
+  ACE_Thread_Mutex        lock_;
+  bool                    io_pending_;
+  bool                    closing_;
 };
 
 class Server_Handler : public ACE_Handler
@@ -70,7 +103,9 @@ public:
   Server_Handler ()
     : msgs_rcvd_ (0),
       stream_ (ACE_SSL_Asynch_Stream::ST_SERVER),
-      block_ (1024) {}
+      block_ (1024),
+      io_pending_ (false),
+      closing_ (false) { ++live_handlers; }
   ~Server_Handler ();
 
   //FUZZ: disable check_for_lack_ACE_OS
@@ -79,11 +114,18 @@ public:
 
 private:
   virtual void handle_read_stream (const ACE_Asynch_Read_Stream::Result &result);
+  virtual void handle_wakeup ();
+
+  void finish (Lock_Guard &guard);
+  void check_done (Lock_Guard &guard);
 
 private:
   size_t                  msgs_rcvd_;
   ACE_SSL_Asynch_Stream   stream_;
   ACE_Message_Block       block_;
+  ACE_Thread_Mutex        lock_;
+  bool                    io_pending_;
+  bool                    closing_;
 };
 
 class Server_Acceptor : public ACE_Event_Handler
@@ -103,7 +145,7 @@ public:
                             ACE_Reactor_Mask close_mask);
 
 private:
-  ACE_SSL_SOCK_Acceptor acceptor_;
+  ACE_SOCK_Acceptor acceptor_;
 };
 
 // Accepting end point.  This is actually "localhost:10010", but some
@@ -123,6 +165,9 @@ static size_t cli_req_no = ACE_MAX_THREADS;
 
 // Delay before a thread sending the next request (in msec.)
 static int req_delay = 0;
+
+// Set when the client thread has made all its connections.
+static std::atomic<bool> clients_done (false);
 
 // This is the string sent from client to server.
 static const char *test_string = "SSL_Asynch_Stream_Test!";
@@ -221,7 +266,36 @@ Client_Handler::~Client_Handler ()
                     this->stream_.handle (),
                     cli_req_no));
     }
-  this->stream_.close ();
+  if (this->handle () != ACE_INVALID_HANDLE)
+    ACE_OS::closesocket (this->handle ());
+  --live_handlers;
+}
+
+void
+Client_Handler::finish (Lock_Guard &guard)
+{
+  this->closing_ = true;
+  this->stream_.close ();   // starts the SSL shutdown; 0 once it is done
+  this->check_done (guard);
+}
+
+void
+Client_Handler::check_done (Lock_Guard &guard)
+{
+  if (this->closing_ && !this->io_pending_ && this->stream_.close () == 0)
+    {
+      guard.release ();
+      delete this;
+    }
+}
+
+void
+Client_Handler::handle_wakeup ()
+{
+  // The stream has shut down (on our close, or on its own after an error).
+  ACE_GUARD (ACE_Thread_Mutex, guard, this->lock_);
+  this->closing_ = true;
+  this->check_done (guard);
 }
 
 int
@@ -229,6 +303,8 @@ Client_Handler::open (ACE_HANDLE handle)
 {
   ACE_DEBUG ((LM_DEBUG, ACE_TEXT ("(%t) Client %@ handle %d up\n"),
               this, handle));
+  this->handle (handle);   // ours to close from here on
+  ACE_GUARD_RETURN (ACE_Thread_Mutex, guard, this->lock_, -1);
   if (this->stream_.open (*this, handle) == -1)
     ACE_ERROR_RETURN ((LM_ERROR,
                        ACE_TEXT ("(%t) Client_Handler: %p\n"),
@@ -236,10 +312,14 @@ Client_Handler::open (ACE_HANDLE handle)
                       -1);
   this->block_.copy (test_string);
   if (this->stream_.write (this->block_, this->block_.length ()) == -1)
-    ACE_ERROR_RETURN ((LM_ERROR,
-                       ACE_TEXT ("(%t) Client_Handler: %p\n"),
-                       ACE_TEXT ("initiate write")),
-                      -1);
+    {
+      ACE_ERROR ((LM_ERROR,
+                  ACE_TEXT ("(%t) Client_Handler: %p\n"),
+                  ACE_TEXT ("initiate write")));
+      this->finish (guard);   // the stream is open: it must close first
+      return 0;
+    }
+  this->io_pending_ = true;
   return 0;
 }
 
@@ -247,6 +327,14 @@ void
 Client_Handler::handle_write_stream
   (const ACE_Asynch_Write_Stream::Result &result)
 {
+  ACE_GUARD (ACE_Thread_Mutex, guard, this->lock_);
+  this->io_pending_ = false;
+  if (this->closing_)
+    {
+      // A write the close canceled, or one that finished as it closed.
+      this->check_done (guard);
+      return;
+    }
   if (!result.success ())
     {
       errno = result.error ();
@@ -254,7 +342,7 @@ Client_Handler::handle_write_stream
                   ACE_TEXT ("(%t) Client handle %d: %p\n"),
                   this->stream_.handle (),
                   ACE_TEXT ("write")));
-      delete this;
+      this->finish (guard);
       return;
     }
   ACE_DEBUG ((LM_DEBUG, ACE_TEXT ("(%t) Client %@ handle %d sent %B of %B bytes\n"),
@@ -280,17 +368,63 @@ Client_Handler::handle_write_stream
           ACE_ERROR ((LM_ERROR,
                       ACE_TEXT ("(%t) Client_Handler: %p\n"),
                       ACE_TEXT ("initiate write")));
-          delete this;
+          this->finish (guard);
         }
+      else
+        this->io_pending_ = true;
     }
   else
     {
+      // Wait for the server to close the session.  Reading also takes in
+      // what the server sent after the handshake (TLS 1.3 session
+      // tickets); closing with that unread would reset the connection
+      // under the server.
       ACE_DEBUG ((LM_DEBUG,
                   ACE_TEXT ("(%t) Client handle %d done sending\n"),
                   this->stream_.handle ()));
-      delete this;
+      this->block_.reset ();
+      if (this->stream_.read (this->block_, this->block_.space ()) == -1)
+        {
+          ACE_ERROR ((LM_ERROR,
+                      ACE_TEXT ("(%t) Client_Handler: %p\n"),
+                      ACE_TEXT ("initiate read")));
+          this->finish (guard);
+        }
+      else
+        this->io_pending_ = true;
     }
   return;
+}
+
+void
+Client_Handler::handle_read_stream
+  (const ACE_Asynch_Read_Stream::Result &result)
+{
+  ACE_GUARD (ACE_Thread_Mutex, guard, this->lock_);
+  this->io_pending_ = false;
+  if (this->closing_)
+    {
+      this->check_done (guard);
+      return;
+    }
+  if (!result.success ())
+    {
+      errno = result.error ();
+      ACE_ERROR ((LM_ERROR,
+                  ACE_TEXT ("(%t) Client handle %d: %p\n"),
+                  this->stream_.handle (),
+                  ACE_TEXT ("read")));
+    }
+  else if (result.bytes_transferred () != 0)
+    ACE_ERROR ((LM_ERROR,
+                ACE_TEXT ("(%t) Client handle %d: %B unexpected bytes\n"),
+                this->stream_.handle (),
+                result.bytes_transferred ()));
+  else
+    ACE_DEBUG ((LM_DEBUG,
+                ACE_TEXT ("(%t) Client handle %d closed by server\n"),
+                this->stream_.handle ()));
+  this->finish (guard);
 }
 
 Server_Handler::~Server_Handler ()
@@ -313,7 +447,35 @@ Server_Handler::~Server_Handler ()
                     this->stream_.handle (),
                     cli_req_no));
     }
+  if (this->handle () != ACE_INVALID_HANDLE)
+    ACE_OS::closesocket (this->handle ());
+  --live_handlers;
+}
+
+void
+Server_Handler::finish (Lock_Guard &guard)
+{
+  this->closing_ = true;
   this->stream_.close ();
+  this->check_done (guard);
+}
+
+void
+Server_Handler::check_done (Lock_Guard &guard)
+{
+  if (this->closing_ && !this->io_pending_ && this->stream_.close () == 0)
+    {
+      guard.release ();
+      delete this;
+    }
+}
+
+void
+Server_Handler::handle_wakeup ()
+{
+  ACE_GUARD (ACE_Thread_Mutex, guard, this->lock_);
+  this->closing_ = true;
+  this->check_done (guard);
 }
 
 int
@@ -321,16 +483,22 @@ Server_Handler::open (ACE_HANDLE handle)
 {
   ACE_DEBUG ((LM_DEBUG, ACE_TEXT ("(%t) Server %@ handle %d up\n"),
               this, handle));
+  this->handle (handle);   // ours to close from here on
+  ACE_GUARD_RETURN (ACE_Thread_Mutex, guard, this->lock_, -1);
   if (this->stream_.open (*this, handle) == -1)
     ACE_ERROR_RETURN ((LM_ERROR,
                        ACE_TEXT ("(%t) Server_Handler: %p\n"),
                        ACE_TEXT ("open")),
                       -1);
   if (this->stream_.read (this->block_, this->block_.space () - 1) == -1)
-    ACE_ERROR_RETURN ((LM_ERROR,
-                       ACE_TEXT ("(%t) Server_Handler: %p\n"),
-                       ACE_TEXT ("read")),
-                      -1);
+    {
+      ACE_ERROR ((LM_ERROR,
+                  ACE_TEXT ("(%t) Server_Handler: %p\n"),
+                  ACE_TEXT ("read")));
+      this->finish (guard);
+      return 0;
+    }
+  this->io_pending_ = true;
   return 0;
 }
 
@@ -338,6 +506,13 @@ void
 Server_Handler::handle_read_stream
   (const ACE_Asynch_Read_Stream::Result &result)
 {
+  ACE_GUARD (ACE_Thread_Mutex, guard, this->lock_);
+  this->io_pending_ = false;
+  if (this->closing_)
+    {
+      this->check_done (guard);
+      return;
+    }
   if (!result.success ())
     {
       errno = result.error ();
@@ -345,7 +520,7 @@ Server_Handler::handle_read_stream
                   ACE_TEXT ("(%t) Server handle %d: %p\n"),
                   this->stream_.handle (),
                   ACE_TEXT ("read")));
-      delete this;
+      this->finish (guard);
       return;
     }
   ACE_DEBUG ((LM_DEBUG, ACE_TEXT ("(%t) Server %@ handle %d recv %B of %B bytes\n"),
@@ -356,7 +531,7 @@ Server_Handler::handle_read_stream
       ACE_DEBUG ((LM_DEBUG,
                   ACE_TEXT ("(%t) Server handle %d closed by peer\n"),
                   this->stream_.handle ()));
-      delete this;
+      this->finish (guard);
       return;
     }
 
@@ -383,14 +558,22 @@ Server_Handler::handle_read_stream
         b.rd_ptr (1);
       ++this->msgs_rcvd_;
     }
+  if (this->msgs_rcvd_ >= cli_req_no)
+    {
+      // All there: the server ends the session (the client waits for it).
+      this->finish (guard);
+      return;
+    }
   b.crunch ();
   if (this->stream_.read (b, b.space () - 1) == -1)
     {
       ACE_ERROR ((LM_ERROR,
                   ACE_TEXT ("(%t) Server_Handler: %p\n"),
                   ACE_TEXT ("read")));
-      delete this;
+      this->finish (guard);
     }
+  else
+    this->io_pending_ = true;
   return;
 }
 
@@ -415,7 +598,7 @@ Server_Acceptor::get_handle () const
 int
 Server_Acceptor::handle_input (ACE_HANDLE)
 {
-  ACE_SSL_SOCK_Stream new_stream;
+  ACE_SOCK_Stream new_stream;
   if (this->acceptor_.accept (new_stream) == -1)
     ACE_ERROR_RETURN ((LM_ERROR,
                        ACE_TEXT ("(%t) %p\n"),
@@ -424,7 +607,7 @@ Server_Acceptor::handle_input (ACE_HANDLE)
   Server_Handler *new_handler = 0;
   ACE_NEW_RETURN (new_handler, Server_Handler, -1);
   if (new_handler->open (new_stream.get_handle ()) != 0)
-    delete new_handler;
+    delete new_handler;   // closes the socket
 
   return 0;
 }
@@ -462,15 +645,19 @@ static ACE_THR_FUNC_RETURN
 start_clients (void *)
 {
   // Client thread function.
+  // Plain TCP connections: ACE_SSL_Asynch_Stream does the TLS handshake
+  // itself.  (A connection that had already done a blocking handshake
+  // would leave the server's TLS 1.3 session tickets unread, and the
+  // stream's own handshake would then read them as its reply.)
   ACE_INET_Addr addr (rendezvous);
-  ACE_SSL_SOCK_Connector connect;
+  ACE_SOCK_Connector connect;
 
   disable_signal (ACE_SIGRTMIN, ACE_SIGRTMAX);
   disable_signal (SIGPIPE, SIGPIPE);
 
   for (size_t i = 0 ; i < cli_conn_no; i++)
     {
-      ACE_SSL_SOCK_Stream stream;
+      ACE_SOCK_Stream stream;
       if (connect.connect (stream, addr) < 0)
         {
           ACE_ERROR ((LM_ERROR,
@@ -482,11 +669,9 @@ start_clients (void *)
       Client_Handler *new_handler = 0;
       ACE_NEW_RETURN (new_handler, Client_Handler, (ACE_THR_FUNC_RETURN)-1);
       if (new_handler->open (stream.get_handle ()) != 0)
-        {
-          delete new_handler;
-          stream.close ();
-        }
+        delete new_handler;   // closes the socket
     }
+  clients_done = true;
 
   return ACE_THR_FUNC_RETURN_NULL;
 }
@@ -534,14 +719,33 @@ run_main (int argc, ACE_TCHAR *argv[])
   ACE_DEBUG ((LM_DEBUG,
               ACE_TEXT ("(%t) Spawning %d proactor threads\n"),
               num_threads));
-  ACE_Thread_Manager::instance ()->spawn_n (num_threads, proactor_loop);
-  ACE_Thread_Manager::instance ()->spawn (start_clients);
+  int const proactor_grp =
+    ACE_Thread_Manager::instance ()->spawn_n (num_threads, proactor_loop);
+  int const client_grp =
+    ACE_Thread_Manager::instance ()->spawn (start_clients);
 
-  ACE_Time_Value loop_limit (20);
-  ACE_Reactor::instance ()->run_reactor_event_loop (loop_limit);
-  ACE_Thread_Manager::instance ()->wait ();
-
-  // Check for num connections up/down.
+  // Accept connections until every client and server handler is done
+  // (at most 60 seconds), then stop the proactor threads.
+  ACE_Time_Value const deadline =
+    ACE_OS::gettimeofday () + ACE_Time_Value (60);
+  while (!(clients_done && live_handlers == 0)
+         && ACE_OS::gettimeofday () < deadline)
+    {
+      ACE_Time_Value slice (0, 100000);
+      ACE_Reactor::instance ()->handle_events (slice);
+    }
+  if (live_handlers != 0)
+    ACE_ERROR ((LM_ERROR,
+                ACE_TEXT ("(%t) %d handlers still open after 60 seconds\n"),
+                static_cast<int> (live_handlers.load ())));
+  // Join only the test threads: the proactor keeps internal threads of
+  // its own in the same thread manager, so wait () would never return.
+  ACE_Reactor::instance ()->remove_handler (&acceptor,
+                                           ACE_Event_Handler::ACCEPT_MASK
+                                           | ACE_Event_Handler::DONT_CALL);
+  ACE_Proactor::instance ()->proactor_end_event_loop ();
+  ACE_Thread_Manager::instance ()->wait_grp (client_grp);
+  ACE_Thread_Manager::instance ()->wait_grp (proactor_grp);
 
   ACE_END_TEST;
   return 0;

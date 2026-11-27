@@ -66,7 +66,6 @@ static BIO_METHOD methods_ACE =
 # define BIO_get_data(b) b->ptr
 # define BIO_get_shutdown(b) b->shutdown
 #else
-static BIO_METHOD* methods_ACE;
 # define BIO_set_num(b, val)
 #endif /* OPENSSL_VERSION_NUMBER < 0x10100000L || (defined(LIBRESSL_VERSION_NUMBER) && LIBRESSL_VERSION_NUMBER < 0x30500000L) */
 
@@ -78,19 +77,26 @@ ACE_SSL_make_BIO (void * ssl_asynch_stream)
 #if OPENSSL_VERSION_NUMBER < 0x10100000L || (defined(LIBRESSL_VERSION_NUMBER) && LIBRESSL_VERSION_NUMBER < 0x30500000L)
   BIO * const pBIO = BIO_new (&methods_ACE);
 #else
-  if (!methods_ACE)
-  {
-    methods_ACE = BIO_meth_new(BIO_TYPE_ACE, "ACE_Asynch_BIO");
-    if (methods_ACE)
+  // One method table for every stream, built on first use.  A function
+  // static is initialized once even when streams open on several threads
+  // at the same time (the unguarded check-then-create this replaces could
+  // build it twice and leak one).
+  static BIO_METHOD * const methods_ACE = [] ()
     {
-      BIO_meth_set_write(methods_ACE, ACE_ASYNCH_BIO_WRITE_NAME);
-      BIO_meth_set_read(methods_ACE, ACE_ASYNCH_BIO_READ_NAME);
-      BIO_meth_set_puts(methods_ACE, ACE_ASYNCH_BIO_PUTS_NAME);
-      BIO_meth_set_ctrl(methods_ACE, ACE_ASYNCH_BIO_CTRL_NAME);
-      BIO_meth_set_create(methods_ACE, ACE_ASYNCH_BIO_NEW_NAME);
-      BIO_meth_set_destroy(methods_ACE, ACE_ASYNCH_BIO_FREE_NAME);
-    }
-  }
+      BIO_METHOD * const m = BIO_meth_new (BIO_TYPE_ACE, "ACE_Asynch_BIO");
+      if (m)
+        {
+          BIO_meth_set_write (m, ACE_ASYNCH_BIO_WRITE_NAME);
+          BIO_meth_set_read (m, ACE_ASYNCH_BIO_READ_NAME);
+          BIO_meth_set_puts (m, ACE_ASYNCH_BIO_PUTS_NAME);
+          BIO_meth_set_ctrl (m, ACE_ASYNCH_BIO_CTRL_NAME);
+          BIO_meth_set_create (m, ACE_ASYNCH_BIO_NEW_NAME);
+          BIO_meth_set_destroy (m, ACE_ASYNCH_BIO_FREE_NAME);
+        }
+      return m;
+    } ();
+  if (methods_ACE == nullptr)
+    return nullptr;
   BIO * const pBIO = BIO_new (methods_ACE);
 #endif
 

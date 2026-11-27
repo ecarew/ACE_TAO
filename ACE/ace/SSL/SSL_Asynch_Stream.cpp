@@ -610,7 +610,11 @@ ACE_SSL_Asynch_Stream::do_SSL_read ()
       break;
     }
 
- this->notify_read (0, EFAULT);
+ // A socket error (for example ECONNRESET) is passed on as it is;
+ // anything else, a TLS protocol error, as EFAULT.
+ this->notify_read (0,
+                    (status == SSL_ERROR_SYSCALL && this->bio_inp_errno_ != 0)
+                    ? this->bio_inp_errno_ : EFAULT);
  this->print_error (status,
                     ACE_TEXT ("SSL_read error"));
 
@@ -665,7 +669,9 @@ ACE_SSL_Asynch_Stream::do_SSL_write ()
       break;
     }
 
- this->notify_write(0, EFAULT);
+ this->notify_write (0,
+                     (status == SSL_ERROR_SYSCALL && this->bio_out_errno_ != 0)
+                     ? this->bio_out_errno_ : EFAULT);
  this->print_error (status,
                     ACE_TEXT ("SSL_write error"));
 

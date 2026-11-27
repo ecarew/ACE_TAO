@@ -1,6 +1,25 @@
 USER VISIBLE CHANGES BETWEEN ACE-8.0.8 and ACE-8.0.9
 ====================================================
 
+. ACE_SSL_Asynch_Stream: the BIO method table shared by all streams is
+  built once, thread-safely; streams opened on several threads at the same
+  time could build it twice and leak one. A failed SSL_read() or
+  SSL_write() caused by a socket error now reaches the handler with that
+  errno (for example ECONNRESET) instead of EFAULT.
+
+. tests/SSL/SSL_Asynch_Stream_Test runs to its end and passes. It could
+  only hang or crash: its handlers deleted themselves before the stream had
+  closed (heap-use-after-free under ASan), it gave the stream connections
+  that had already done a blocking TLS handshake (under TLS 1.3 the stream's
+  own handshake then read the server's session tickets and failed), the
+  client closed with those tickets unread (resetting the connection under
+  the server), and it waited for the proactor's internal threads, which
+  never exit.
+
+. ACE_Data_Block::size() no longer passes a null pointer to memcpy() when
+  growing an empty block that has no buffer yet (undefined behavior, reported
+  by UBSan when an ACE_InputCDR is built from an empty message block).
+
 . ACE_OS::ctime_r() builds with ACE_USES_WCHAR on platforms without
   ACE_HAS_REENTRANT_FUNCTIONS other than Windows (macOS among them): it
   converts ctime()'s result instead of calling the Windows-only _wctime().
