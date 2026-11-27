@@ -20,7 +20,13 @@ eval '(exit $?0)' && eval 'exec perl -S $0 ${1+"$@"}'
 # (KRB_FAILED) with the real reason; GSSUP logins and TAO's GSSUP client
 # still work beside Kerberos; csiv2_kerberos = required offers only
 # Kerberos and refuses everything else; the keytab self-check refuses a
-# world-readable keytab in prod and RC4 keys anywhere.  The SAS test's
+# world-readable keytab in prod and RC4 keys anywhere.  In prod the
+# reference's IIOP port is 0; a Kerberos token over plain IIOP (a test-mode
+# instance) is refused as SAS_NO_TLS; a client clock skewed past the
+# service's krb5.conf clockskew is refused (needs faketime; skipped
+# without it); at ORB debug level 10 no log line holds the password or a
+# keytab key (TAO's hex dumps of whole GIOP messages at that level are
+# not checked: a debugging aid, out of scope).  The SAS test's
 # server and client (../SAS) and certificates (../Transport) are used.
 #
 # The lab is found at $ACE_TAO_KRB_LAB (default
@@ -161,6 +167,8 @@ my %conf = (krb      => $base . "csiv2_kerberos = supported\nkrb_keytab = $work/
             loose    => $base . "csiv2_kerberos = supported\nkrb_keytab = $work/who.keytab\nkrb_channel_binding = supported\n",
             required => $base . "csiv2_kerberos = required\nkrb_keytab = $work/who.keytab\n",
             open     => $base . "csiv2_kerberos = supported\nkrb_keytab = $work/open.keytab\n");
+# A test-mode instance, which keeps a plain IIOP listener (prod has none).
+($conf{plain} = $conf{krb}) =~ s/^mode = \w+$/mode = test/m;
 foreach my $c (keys %conf) { spit ("$work/$c.conf", $conf{$c}); chmod (0600, "$work/$c.conf"); }
 
 sub svc {
@@ -177,7 +185,7 @@ my $bind = "$certs/server_cert.pem";
 
 my ($pid, $d, $log);
 sub start_server {
-    my ($which, $tamper, $tag) = @_;
+    my ($which, $tamper, $tag, @orb) = @_;
     $d = "$work/$which" . (defined $tag ? "_$tag" : '');
     mkdir $d;
     # A reference left by an earlier server in this directory must not
@@ -190,7 +198,7 @@ sub start_server {
         $ENV{'KRB5_CONFIG'} = "$work/krb5.conf";
         $ENV{'SAS_TEST_TAMPER_REPLY'} = $tamper if defined $tamper;
         open (STDOUT, '>', $log); open (STDERR, '>&STDOUT');
-        exec ("$sas/server", '-ORBSvcConf', "$work/server.svc", '-ORBListenEndpoints', 'iiop://127.0.0.1:', '-d', $d);
+        exec ("$sas/server", '-ORBSvcConf', "$work/server.svc", '-ORBListenEndpoints', 'iiop://127.0.0.1:', @orb, '-d', $d);
         exit 127;
     }
     for (my $i = 0; $i < 100 && !-s "$d/beta.ior"; ++$i) { select (undef, undef, undef, 0.1); }
@@ -221,6 +229,7 @@ expect ('the reference lists Kerberos first (mechanism OID, service principal), 
         ['^    MECH 0 requires=0x[0-9a-f]+ transport=36$', '^      AS supports=0x40 requires=0x0 mech_octets=11$',
          'target_name=.*ace-tao/who\.lab\.test\@LAB\.TEST',
          '^    MECH 1 requires=0x[0-9a-f]+ transport=36$', '^      AS supports=0x40 requires=0x0 mech_octets=8$']);
+expect ('  ... and its IIOP port is 0 (prod has no plain listener)', $ior, ['^PROFILE 0 .*iiop_port=0$']) if $prod;
 
 $out = call ('whoami', "krb5:$principal:$bind");
 expect ('a Kerberos login bound to the TLS session is served as alice@LAB.TEST', $out,
@@ -267,6 +276,54 @@ expect ('TAO\'s own GSSUP client skips the Kerberos mechanism and logs in with G
         ['^ACQUIRE OK$', '^SAS REPLY complete ctx=0 stateful=0$', '^WHOAMI name=\S+alice\@lab\.test authenticated=yes ']);
 stop_server ();
 expect ('no password or Kerberos secret in the log', slurp ($log), ['SAS_ACCEPTED'], ['wonderland']);
+
+# --- a Kerberos token over plain IIOP (test mode: prod has no plain listener) ------------
+start_server ('plain');
+$out = scalar (`$sas/client -ORBSvcConf /dev/null -k file://$d/alpha.ior -c whoami -m krb5:$principal:none 2>&1`);
+expect ('a Kerberos token over plain IIOP is refused', $out, [@refused1], ['^WHOAMI']);
+expect ('  (audited as SAS_NO_TLS)', log_now (), ['reason="SAS_NO_TLS"']);
+stop_server ();
+
+# --- a skewed client clock -----------------------------------------------------------------
+# The client runs 60 s ahead: inside the KDC's 300 s window, so it still
+# gets its service ticket, but past the service's 10 s clockskew, so the
+# authenticator is refused.
+my ($faketime) = grep { -x $_ } map { "$_/faketime" } split (/:/, $ENV{'PATH'});
+if (!defined $faketime) {
+    print "skipped: skewed-clock check (no faketime here; the Linux lab runs it)\n";
+}
+else {
+    start_server ('krb', undef, 'skew');
+    $out = scalar (`$faketime -f +60s $sas/client -ORBSvcConf $work/client.svc -k file://$d/alpha.ior -c whoami -m krb5:$principal:$bind 2>&1`);
+    expect ('a client clock 60 s ahead (service clockskew 10 s) is refused', $out, [@refused1], ['^WHOAMI']);
+    expect ('  (audited: the clock skew)', log_now (), ['reason="KRB_FAILED" .*context_error="1"\] .*[Ss]kew']);
+    $out = call ('whoami', "krb5:$principal:$bind");
+    expect ('  ... while the same client with a true clock is served', $out, ['^WHOAMI name=\S+alice\@LAB\.TEST']);
+    stop_server ();
+}
+
+# --- no secret in the log text at ORB debug level 10 ----------------------------------------
+# Only the text TAO and the security code write: the hex dumps of whole
+# GIOP messages at this level (service contexts included) are a
+# debugging aid and are not checked.
+sub without_dumps {
+    return join ("\n", grep { !/^(?:[0-9a-f]{2}  ?){1,16}/ } split (/\n/, shift));
+}
+start_server ('krb', undef, 'debug10', '-ORBDebugLevel', '10');
+call ('whoami', "krb5:$principal:$bind");
+call ('whoami', 'gssup:alice:wonderland');
+stop_server ();
+{
+    my $text = without_dumps (slurp ($log));
+    my @leaks;
+    push @leaks, 'level 10 not in effect' unless $text =~ /GIOP_Message_Base/;
+    push @leaks, 'the GSSUP password' if index ($text, 'wonderland') >= 0;
+    my @keys = `$krb/klist -K -k $work/who.keytab 2>&1` =~ /\(0x([0-9a-f]{32,})\)/g;
+    push @leaks, 'no keytab keys were read' unless @keys;
+    foreach my $k (@keys) { push @leaks, 'a keytab key' if $text =~ /$k/i; }
+    expect ('at ORB debug level 10 no log line holds the password or a keytab key',
+            @leaks ? join (', ', @leaks) : 'clean', ['^clean$']);
+}
 
 # --- krb_channel_binding = supported ---------------------------------------------------
 start_server ('loose');
@@ -517,6 +574,36 @@ if (-s "$work/rc4.keytab") {
             ['csiv2_kerberos: Kerberos keytab unusable, every login refused: \S+rc4\.keytab holds weak keys \(rc4-hmac']);
 } else {
     print "SKIPPED: RC4 keytab check (ktutil wrote no RC4 key)\n";
+}
+
+# --- key rotation ---------------------------------------------------------------------------
+# Needs ACE_TAO_KRB_REKEY: a command that gives a lab service (its name is
+# appended) a new key version, kept in its keytab beside the old one
+# (CORBA lab/kdc.sh rekey).  A ticket issued before the rotation and one
+# issued after must both be served from the two-version keytab.
+if (my $rekey = $ENV{'ACE_TAO_KRB_REKEY'}) {
+    start_server ('krb', undef, 'prerot');
+    call ('poke', "krb5save:$principal:$bind:$work/old_key_token");
+    stop_server ();
+    my $r = `$rekey who 2>&1`;
+    copy ("$lab/keytabs/who.keytab", "$work/who.keytab") || die "copy keytab: $!";
+    chmod (0600, "$work/who.keytab");
+    my %kvno = map { $_ => 1 } (`$krb/klist -k $work/who.keytab 2>&1` =~ /^\s*(\d+) ace-tao\/who\./mg);
+    expect ('key rotation: the keytab holds the old and the new key version', scalar (keys %kvno) . " versions\n$r",
+            ['^([2-9]|\d\d+) versions']);
+    start_server ('krb', undef, 'rot');
+    $out = call ('whoami', "rawtoken:$work/old_key_token");
+    expect ('  ... a ticket issued under the old key is still served', $out, ['^WHOAMI name=\S+alice\@LAB\.TEST']);
+    {
+        local $ENV{'KRB5CCNAME'} = "FILE:$work/ccache_rot";
+        `$krb/kinit alice\@LAB.TEST < $lab/passwords/alice 2>&1`;
+        $out = call ('whoami', "krb5:$principal:$bind");
+    }
+    expect ('  ... and so is one issued under the new key', $out, ['^WHOAMI name=\S+alice\@LAB\.TEST']);
+    stop_server ();
+}
+else {
+    print "skipped: key rotation check (set ACE_TAO_KRB_REKEY, e.g. to CORBA lab/kdc.sh rekey)\n";
 }
 
 rmtree ($work) if $status == 0;
