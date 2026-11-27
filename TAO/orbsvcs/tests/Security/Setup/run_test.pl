@@ -11,6 +11,7 @@ eval '(exit $?0)' && eval 'exec perl -S $0 ${1+"$@"}'
 use lib "$ENV{ACE_ROOT}/bin";
 use PerlACE::TestTarget;
 use Cwd;
+use File::Copy;
 use File::Path qw(rmtree);
 
 my $test = PerlACE::TestTarget::create_target (1) || die "Create target 1 failed\n";
@@ -105,6 +106,15 @@ foreach my $k (keys %chrony) {
 }
 check_case ('NTS sources found', "check --chronyc $work/chronyc-nts", [1, 2],
             ['OK\s+nts\s+chrony: 1 of 2 source\(s\) use NTS']);
+{
+    # chronyc runs without a shell, so its path may hold blanks and quotes.
+    my $odd = "$work/odd dir's";
+    mkdir $odd;
+    copy ("$work/chronyc-nts", "$odd/chronyc") || die "copy: $!";
+    chmod (0755, "$odd/chronyc");
+    check_case ('chronyc runs without a shell (a path with a blank and a quote)', "check --chronyc \"$odd/chronyc\"", [1, 2],
+                ['OK\s+nts\s+chrony: 1 of 2 source\(s\) use NTS']);
+}
 check_case ('no NTS sources warns', "check --chronyc $work/chronyc-plain", [1, 2],
             ['WARN\s+nts\s+chrony has no NTS sources']);
 check_case ('chrony not found warns', "check --chronyc $work/no-such-chronyc", [1, 2],

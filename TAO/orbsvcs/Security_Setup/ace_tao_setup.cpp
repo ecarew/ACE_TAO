@@ -57,9 +57,14 @@
 #include <openssl/x509.h>
 #include <openssl/err.h>
 
+#include <cerrno>
 #include <map>
 #include <string>
 #include <vector>
+
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 using TAO::Security::Audit_Logger;
 using TAO::Security::Audit_Record;
@@ -294,6 +299,67 @@ namespace
     return b == std::string::npos ? std::string () : l.substr (b, e - b + 1);
   }
 
+  /// The child of run_reading (one at a time).
+  pid_t reading_child = -1;
+
+  /**
+   * Starts @a args[0] (an absolute path) with @a args, no shell, its
+   * standard output a pipe returned for reading and its standard error
+   * discarded; null if it cannot start.  finish_reading closes the pipe
+   * and returns the exit status (-1 if it did not exit normally).
+   */
+  FILE *
+  run_reading (std::vector<std::string> const &args)
+  {
+    int fds[2];
+    if (::pipe (fds) != 0)
+      return nullptr;
+    pid_t const pid = ::fork ();
+    if (pid < 0)
+      {
+        ::close (fds[0]);
+        ::close (fds[1]);
+        return nullptr;
+      }
+    if (pid == 0)
+      {
+        ::dup2 (fds[1], 1);
+        int const null = ::open ("/dev/null", O_WRONLY);
+        if (null >= 0)
+          ::dup2 (null, 2);
+        ::close (fds[0]);
+        ::close (fds[1]);
+        std::vector<char *> v;
+        for (auto const &a : args)
+          v.push_back (const_cast<char *> (a.c_str ()));
+        v.push_back (nullptr);
+        ::execv (v[0], v.data ());
+        ::_exit (127);
+      }
+    ::close (fds[1]);
+    FILE *const f = ::fdopen (fds[0], "r");
+    if (f == nullptr)
+      {
+        ::close (fds[0]);
+        ::waitpid (pid, nullptr, 0);
+        return nullptr;
+      }
+    reading_child = pid;
+    return f;
+  }
+
+  int
+  finish_reading (FILE *f)
+  {
+    ::fclose (f);
+    int status = 0;
+    while (::waitpid (reading_child, &status, 0) < 0)
+      if (errno != EINTR)
+        return -1;
+    reading_child = -1;
+    return WIFEXITED (status) ? WEXITSTATUS (status) : -1;
+  }
+
   /// Sets @a key in @a lines, replacing an existing line or appending.
   void
   set_key (std::vector<std::string> &lines, std::string const &key, std::string const &value)
@@ -420,7 +486,7 @@ namespace
         candidates = {"/usr/bin/chronyc", "/usr/sbin/chronyc", "/opt/homebrew/bin/chronyc", "/usr/local/bin/chronyc"};
       std::string chronyc;
       for (auto const &c : candidates)
-        if (ACE_OS::access (c.c_str (), X_OK) == 0 && c.find ('\'') == std::string::npos)
+        if (ACE_OS::access (c.c_str (), X_OK) == 0)
           {
             chronyc = c;
             break;
@@ -431,8 +497,8 @@ namespace
       else
         {
           int sources = 0, nts = 0;
-          FILE *const pp = ::popen (("'" + chronyc + "' -c -n authdata 2>/dev/null").c_str (), "r");
           int rc = -1;
+          FILE *const pp = run_reading (std::vector<std::string> {chronyc, "-c", "-n", "authdata"});
           if (pp != nullptr)
             {
               char line[512];
@@ -447,7 +513,7 @@ namespace
                   if (l.substr (c1 + 1, c2 == std::string::npos ? std::string::npos : c2 - c1 - 1) == "NTS")
                     ++nts;
                 }
-              rc = ::pclose (pp);
+              rc = finish_reading (pp);
             }
           if (rc != 0)
             f.push_back ({"nts", nts_bad, chronyc + " could not report its sources (is chronyd running?)"});
