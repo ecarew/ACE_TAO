@@ -1,6 +1,13 @@
 USER VISIBLE CHANGES BETWEEN ACE-8.0.8 and ACE-8.0.9
 ====================================================
 
+. ACE_SSL_Context's library init and fini are serialized by a lock of
+  their own instead of ACE_Static_Object_Lock. At exit the service
+  repository is shut down under its lock (closing the SSL context) and
+  closed while ACE_Static_Object_Lock is held, so sharing that lock
+  ordered the two locks both ways (a potential deadlock reported by
+  ThreadSanitizer).
+
 . The singleton templates (ACE_Singleton, ACE_Unmanaged_Singleton,
   ACE_TSS_Singleton, ACE_Unmanaged_TSS_Singleton, ACE_DLL_Singleton_T)
   publish the instance through a std::atomic pointer: the unlocked first

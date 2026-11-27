@@ -40,6 +40,19 @@ namespace
   /// initialized.
   int ssl_library_init_count = 0;
 
+  /// Serializes ssl_library_init () and ssl_library_fini ().  A lock of its
+  /// own rather than ACE_Static_Object_Lock: the SSL context is closed
+  /// while the service repository is shut down under its lock, and the
+  /// repository itself is closed while holding ACE_Static_Object_Lock, so
+  /// sharing that lock ordered the two both ways (a potential deadlock).
+  /// Never destroyed, since ssl_library_fini () may run during the
+  /// ACE_Object_Manager's teardown, after ordinary statics are gone.
+  ACE_SYNCH_RECURSIVE_MUTEX &ssl_library_lock ()
+  {
+    static ACE_SYNCH_RECURSIVE_MUTEX *const lock = new ACE_SYNCH_RECURSIVE_MUTEX;
+    return *lock;
+  }
+
   // @@ This should also be done with a singleton, otherwise it is not
   //    thread safe and/or portable to some weird platforms...
 
@@ -155,9 +168,7 @@ ACE_SSL_Context::ssl_library_init ()
 {
   ACE_TRACE ("ACE_SSL_Context::ssl_library_init");
 
-  ACE_MT (ACE_GUARD (ACE_Recursive_Thread_Mutex,
-                     ace_ssl_mon,
-                     *ACE_Static_Object_Lock::instance ()));
+  ACE_GUARD (ACE_SYNCH_RECURSIVE_MUTEX, ace_ssl_mon, ssl_library_lock ());
 
   if (ssl_library_init_count == 0)
     {
@@ -222,9 +233,7 @@ ACE_SSL_Context::ssl_library_fini ()
 {
   ACE_TRACE ("ACE_SSL_Context::ssl_library_fini");
 
-  ACE_MT (ACE_GUARD (ACE_Recursive_Thread_Mutex,
-                     ace_ssl_mon,
-                     *ACE_Static_Object_Lock::instance ()));
+  ACE_GUARD (ACE_SYNCH_RECURSIVE_MUTEX, ace_ssl_mon, ssl_library_lock ());
 
   --ssl_library_init_count;
   if (ssl_library_init_count == 0)
