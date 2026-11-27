@@ -28,12 +28,12 @@ TAO_Singleton<TYPE, ACE_LOCK>::dump ()
   ACE_TRACE ("TAO_Singleton<TYPE, ACE_LOCK>::dump");
 
   TAOLIB_DEBUG ((LM_DEBUG,  ACE_TEXT ("instance_ = %@"),
-              TAO_Singleton<TYPE, ACE_LOCK>::instance_i ()));
+              TAO_Singleton<TYPE, ACE_LOCK>::instance_i ().load ()));
   TAOLIB_DEBUG ((LM_DEBUG, ACE_END_DUMP));
 #endif /* ACE_HAS_DUMP */
 }
 
-template <class TYPE, class ACE_LOCK> TAO_Singleton<TYPE, ACE_LOCK> *&
+template <class TYPE, class ACE_LOCK> std::atomic<TAO_Singleton<TYPE, ACE_LOCK> *> &
 TAO_Singleton<TYPE, ACE_LOCK>::instance_i ()
 {
   return TAO_Singleton<TYPE, ACE_LOCK>::singleton_;
@@ -44,11 +44,14 @@ TAO_Singleton<TYPE, ACE_LOCK>::instance ()
 {
   ACE_TRACE ("TAO_Singleton<TYPE, ACE_LOCK>::instance");
 
-  TAO_Singleton<TYPE, ACE_LOCK> *&singleton =
+  std::atomic<TAO_Singleton<TYPE, ACE_LOCK> *> &singleton =
     TAO_Singleton<TYPE, ACE_LOCK>::instance_i ();
 
-  // Perform the Double-Check pattern...
-  if (singleton == 0)
+  // Perform the Double-Check pattern.  The first check is an acquire
+  // load: a thread that sees the pointer also sees the constructed
+  // object, which is published with a release store.
+  TAO_Singleton<TYPE, ACE_LOCK> *s = singleton.load (std::memory_order_acquire);
+  if (s == nullptr)
     {
       if (TAO_Singleton_Manager::starting_up () || TAO_Singleton_Manager::shutting_down ())
         {
@@ -59,7 +62,8 @@ TAO_Singleton<TYPE, ACE_LOCK>::instance ()
           // don't register for destruction with the
           // TAO_Singleton_Manager:  we'll have to leak this instance.
 
-          ACE_NEW_RETURN (singleton, (TAO_Singleton<TYPE, ACE_LOCK>), 0);
+          ACE_NEW_RETURN (s, (TAO_Singleton<TYPE, ACE_LOCK>), 0);
+          singleton.store (s, std::memory_order_release);
         }
       else
         {
@@ -74,31 +78,33 @@ TAO_Singleton<TYPE, ACE_LOCK>::instance ()
 
           ACE_GUARD_RETURN (ACE_LOCK, ace_mon, *lock, 0);
 
-          if (singleton == 0)
+          s = singleton.load (std::memory_order_relaxed);
+          if (s == nullptr)
             {
 #endif /* ACE_MT_SAFE */
-              ACE_NEW_RETURN (singleton, (TAO_Singleton<TYPE, ACE_LOCK>), 0);
+              ACE_NEW_RETURN (s, (TAO_Singleton<TYPE, ACE_LOCK>), 0);
+              singleton.store (s, std::memory_order_release);
 
               // Register for destruction with TAO_Singleton_Manager.
 #if !defined (ACE_MT_SAFE) || (ACE_MT_SAFE == 0)
-              TAO_Singleton_Manager::at_exit (singleton, 0,
+              TAO_Singleton_Manager::at_exit (s, 0,
                                               typeid (TYPE).name ());
 #else
-              TAO_Singleton_Manager::at_exit (singleton, &lock,
+              TAO_Singleton_Manager::at_exit (s, &lock,
                                               typeid (TYPE).name());
             }
 #endif /* ACE_MT_SAFE */
         }
     }
 
-  return &singleton->instance_;
+  return &s->instance_;
 }
 
 template <class TYPE, class ACE_LOCK> void
 TAO_Singleton<TYPE, ACE_LOCK>::cleanup (void *param)
 {
   delete this;
-  TAO_Singleton<TYPE, ACE_LOCK>::instance_i () = 0;
+  TAO_Singleton<TYPE, ACE_LOCK>::instance_i ().store (nullptr);
 
 #if defined ACE_MT_SAFE && ACE_MT_SAFE != 0
   if (param)
@@ -110,11 +116,11 @@ TAO_Singleton<TYPE, ACE_LOCK>::cleanup (void *param)
 }
 
 // Pointer to the Singleton instance.
-template <class TYPE, class ACE_LOCK> TAO_Singleton<TYPE, ACE_LOCK> *
-TAO_Singleton<TYPE, ACE_LOCK>::singleton_ = 0;
+template <class TYPE, class ACE_LOCK> std::atomic<TAO_Singleton<TYPE, ACE_LOCK> *>
+TAO_Singleton<TYPE, ACE_LOCK>::singleton_ {nullptr};
 
-template <class TYPE, class ACE_LOCK> TAO_TSS_Singleton<TYPE, ACE_LOCK> *
-TAO_TSS_Singleton<TYPE, ACE_LOCK>::singleton_ = 0;
+template <class TYPE, class ACE_LOCK> std::atomic<TAO_TSS_Singleton<TYPE, ACE_LOCK> *>
+TAO_TSS_Singleton<TYPE, ACE_LOCK>::singleton_ {nullptr};
 
 template <class TYPE, class ACE_LOCK> void
 TAO_TSS_Singleton<TYPE, ACE_LOCK>::dump ()
@@ -123,12 +129,12 @@ TAO_TSS_Singleton<TYPE, ACE_LOCK>::dump ()
   ACE_TRACE ("TAO_TSS_Singleton<TYPE, ACE_LOCK>::dump");
 
   TAOLIB_DEBUG ((LM_DEBUG,  ACE_TEXT ("instance_ = %@"),
-              TAO_TSS_Singleton<TYPE, ACE_LOCK>::instance_i ()));
+              TAO_TSS_Singleton<TYPE, ACE_LOCK>::instance_i ().load ()));
   TAOLIB_DEBUG ((LM_DEBUG, ACE_END_DUMP));
 #endif /* ACE_HAS_DUMP */
 }
 
-template <class TYPE, class ACE_LOCK> TAO_TSS_Singleton<TYPE, ACE_LOCK> *&
+template <class TYPE, class ACE_LOCK> std::atomic<TAO_TSS_Singleton<TYPE, ACE_LOCK> *> &
 TAO_TSS_Singleton<TYPE, ACE_LOCK>::instance_i ()
 {
   return TAO_TSS_Singleton<TYPE, ACE_LOCK>::singleton_;
@@ -139,11 +145,14 @@ TAO_TSS_Singleton<TYPE, ACE_LOCK>::instance ()
 {
   ACE_TRACE ("TAO_TSS_Singleton<TYPE, ACE_LOCK>::instance");
 
-  TAO_TSS_Singleton<TYPE, ACE_LOCK> *&singleton =
+  std::atomic<TAO_TSS_Singleton<TYPE, ACE_LOCK> *> &singleton =
     TAO_TSS_Singleton<TYPE, ACE_LOCK>::instance_i ();
 
-  // Perform the Double-Check pattern...
-  if (singleton == 0)
+  // Perform the Double-Check pattern.  The first check is an acquire
+  // load: a thread that sees the pointer also sees the constructed
+  // object, which is published with a release store.
+  TAO_TSS_Singleton<TYPE, ACE_LOCK> *s = singleton.load (std::memory_order_acquire);
+  if (s == nullptr)
     {
       if (TAO_Singleton_Manager::starting_up () || TAO_Singleton_Manager::shutting_down ())
         {
@@ -154,7 +163,8 @@ TAO_TSS_Singleton<TYPE, ACE_LOCK>::instance ()
           // don't register for destruction with the
           // TAO_Singleton_Manager:  we'll have to leak this instance.
 
-          ACE_NEW_RETURN (singleton, (TAO_TSS_Singleton<TYPE, ACE_LOCK>), 0);
+          ACE_NEW_RETURN (s, (TAO_TSS_Singleton<TYPE, ACE_LOCK>), 0);
+          singleton.store (s, std::memory_order_release);
         }
       else
         {
@@ -169,28 +179,30 @@ TAO_TSS_Singleton<TYPE, ACE_LOCK>::instance ()
 
           ACE_GUARD_RETURN (ACE_LOCK, ace_mon, *lock, 0);
 
-          if (singleton == 0)
+          s = singleton.load (std::memory_order_relaxed);
+          if (s == nullptr)
             {
 #endif /* ACE_MT_SAFE */
-              ACE_NEW_RETURN (singleton, (TAO_TSS_Singleton<TYPE, ACE_LOCK>),
+              ACE_NEW_RETURN (s, (TAO_TSS_Singleton<TYPE, ACE_LOCK>),
                               0);
+              singleton.store (s, std::memory_order_release);
 
               // Register for destruction with TAO_Singleton_Manager.
-              TAO_Singleton_Manager::at_exit (singleton, 0, typeid (TYPE).name ());
+              TAO_Singleton_Manager::at_exit (s, 0, typeid (TYPE).name ());
 #if defined (ACE_MT_SAFE) && (ACE_MT_SAFE != 0)
             }
 #endif /* ACE_MT_SAFE */
         }
     }
 
-  return ACE_TSS_GET (&singleton->instance_, TYPE);
+  return ACE_TSS_GET (&s->instance_, TYPE);
 }
 
 template <class TYPE, class ACE_LOCK> void
 TAO_TSS_Singleton<TYPE, ACE_LOCK>::cleanup (void *)
 {
   delete this;
-  TAO_TSS_Singleton<TYPE, ACE_LOCK>::instance_i () = 0;
+  TAO_TSS_Singleton<TYPE, ACE_LOCK>::instance_i ().store (nullptr);
 }
 
 TAO_END_VERSIONED_NAMESPACE_DECL

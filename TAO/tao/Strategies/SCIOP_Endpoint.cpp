@@ -70,7 +70,7 @@ TAO_SCIOP_Endpoint::TAO_SCIOP_Endpoint (const TAO_SCIOP_Endpoint &rhs)
   , host_ (rhs.host_)
   , port_ (rhs.port_)
   , object_addr_ (rhs.object_addr_)
-  , object_addr_set_ (rhs.object_addr_set_)
+  , object_addr_set_ (rhs.object_addr_set_.load ())
   , preferred_path_  (rhs.preferred_path_)
   , is_encodable_ (rhs.is_encodable_)
 {

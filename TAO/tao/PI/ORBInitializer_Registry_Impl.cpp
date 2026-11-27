@@ -128,12 +128,20 @@ TAO::ORBInitializer_Registry::pre_init (
   char *argv[],
   PortableInterceptor::SlotId &slotid)
 {
-  ACE_GUARD_RETURN (TAO_SYNCH_RECURSIVE_MUTEX,
-                    guard,
-                    this->lock_,
-                    0);
+  // Take a copy of the initializers under lock_ and call them without
+  // it: they look up services (the service repository's lock), and
+  // services register initializers here while that lock is held, so
+  // holding lock_ across the calls risks a deadlock.
+  ACE_Array_Base<PortableInterceptor::ORBInitializer_var> initializers;
+  {
+    ACE_GUARD_RETURN (TAO_SYNCH_RECURSIVE_MUTEX,
+                      guard,
+                      this->lock_,
+                      0);
+    initializers = this->initializers_;
+  }
 
-  size_t const initializer_count (this->initializers_.size ());
+  size_t const initializer_count (initializers.size ());
 
   if (initializer_count > 0)
     {
@@ -154,7 +162,7 @@ TAO::ORBInitializer_Registry::pre_init (
 
       for (size_t i = 0; i < initializer_count; ++i)
         {
-          this->initializers_[i]->pre_init (orb_init_info_.in ());
+          initializers[i]->pre_init (orb_init_info_.in ());
         }
 
       slotid = orb_init_info_temp->slot_count ();
@@ -178,9 +186,16 @@ TAO::ORBInitializer_Registry::post_init (
 {
   if (pre_init_count > 0)
     {
-      ACE_GUARD (TAO_SYNCH_RECURSIVE_MUTEX,
-                 guard,
-                 this->lock_);
+      // As in pre_init (): call the initializers without holding lock_.
+      ACE_Array_Base<PortableInterceptor::ORBInitializer_var> initializers;
+      {
+        ACE_GUARD (TAO_SYNCH_RECURSIVE_MUTEX,
+                   guard,
+                   this->lock_);
+        initializers = this->initializers_;
+      }
+      if (pre_init_count > initializers.size ())
+        pre_init_count = initializers.size ();
 
       TAO_ORBInitInfo * orb_init_info_temp = nullptr;
 
@@ -199,7 +214,7 @@ TAO::ORBInitializer_Registry::post_init (
 
       for (size_t i = 0; i < pre_init_count; ++i)
         {
-          this->initializers_[i]->post_init (orb_init_info_.in ());
+          initializers[i]->post_init (orb_init_info_.in ());
         }
 
 #if TAO_HAS_INTERCEPTORS == 1

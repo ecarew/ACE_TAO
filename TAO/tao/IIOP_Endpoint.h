@@ -29,6 +29,7 @@
 
 #include "ace/INET_Addr.h"
 #include "ace/Vector_T.h"
+#include <atomic>
 
 TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -197,7 +198,9 @@ private:
   bool is_encodable_;
 
   /// Flag to indicate if the address has been resolved and set.
-  mutable bool object_addr_set_;
+  /// Atomic: object_addr () reads it without the lock (double-checked
+  /// locking); it is set, with release, only after object_addr_ is filled.
+  mutable std::atomic<bool> object_addr_set_;
 
   /// Cached instance of ACE_INET_Addr for use in making
   /// invocations, etc.

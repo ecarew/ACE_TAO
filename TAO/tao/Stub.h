@@ -371,8 +371,10 @@ protected:
   /// Mutex to protect access to the forwarding profile.
   TAO_SYNCH_MUTEX profile_lock_;
 
-  /// Have we successfully talked to the forward profile yet?
-  CORBA::Boolean profile_success_;
+  /// Have we successfully talked to the forward profile yet?  Atomic:
+  /// every successful invocation sets it, from whatever thread made it,
+  /// under that invocation's transport lock rather than profile_lock_.
+  std::atomic<bool> profile_success_;
 
   /// Reference counter.
   std::atomic<uint32_t> refcount_;

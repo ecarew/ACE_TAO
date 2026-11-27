@@ -145,7 +145,7 @@ TAO_Transport::TAO_Transport (CORBA::ULong tag,
   , messaging_object_ (nullptr)
   , char_translator_ (nullptr)
   , wchar_translator_ (nullptr)
-  , tcs_set_ (0)
+  , tcs_set_ (false)
   , first_request_ (true)
   , partial_message_ (nullptr)
 #if TAO_HAS_SENDFILE == 1
@@ -2765,15 +2765,17 @@ TAO_Transport::transport_cache_manager ()
 void
 TAO_Transport::assign_translators (TAO_InputCDR *inp, TAO_OutputCDR *outp)
 {
-  if (this->char_translator_)
+  TAO_Codeset_Translator_Base *const ct = this->char_translator_.load ();
+  if (ct)
     {
-      this->char_translator_->assign (inp);
-      this->char_translator_->assign (outp);
+      ct->assign (inp);
+      ct->assign (outp);
     }
-  if (this->wchar_translator_)
+  TAO_Codeset_Translator_Base *const wct = this->wchar_translator_.load ();
+  if (wct)
     {
-      this->wchar_translator_->assign (inp);
-      this->wchar_translator_->assign (outp);
+      wct->assign (inp);
+      wct->assign (outp);
     }
 }
 

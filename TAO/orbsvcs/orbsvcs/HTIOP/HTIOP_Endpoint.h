@@ -25,6 +25,7 @@
 
 #include "tao/Endpoint.h"
 #include "tao/ORB.h"
+#include <atomic>
 
 TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -136,7 +137,9 @@ namespace TAO
       ACE::HTBP::Addr object_addr_;
 
       /// Flag to indicate if the address has been resolved and set.
-      int object_addr_set_;
+      /// Atomic: object_addr () checks it without the lock (double-checked
+      /// locking) and sets it only after object_addr_ is filled.
+      std::atomic<bool> object_addr_set_;
 
       /// HTIOP Endpoints can be strung into a list.  Return the next
       /// endpoint in the list, if any.

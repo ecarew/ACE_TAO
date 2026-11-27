@@ -20,7 +20,7 @@ TAO::HTIOP::Endpoint::Endpoint (const ACE::HTBP::Addr &addr,
     port_ (0),
     htid_ (),
     object_addr_ (addr),
-    object_addr_set_ (0),
+    object_addr_set_ (false),
     next_ (nullptr)
 {
   this->set (addr, use_dotted_decimal_addresses);
@@ -35,7 +35,7 @@ TAO::HTIOP::Endpoint::Endpoint (const char *host,
     port_ (port),
     htid_ (),
     object_addr_ (addr),
-    object_addr_set_ (0),
+    object_addr_set_ (false),
     next_ (nullptr)
 {
   if (host != nullptr)
@@ -50,7 +50,7 @@ TAO::HTIOP::Endpoint::Endpoint ()
     port_ (0),
     htid_ (),
     object_addr_ (),
-    object_addr_set_ (0),
+    object_addr_set_ (false),
     next_ (nullptr)
 {
 }
@@ -63,7 +63,7 @@ TAO::HTIOP::Endpoint::Endpoint (const char *host,
     port_ (port),
     htid_ (),
     object_addr_ (),
-    object_addr_set_ (0),
+    object_addr_set_ (false),
     next_ (nullptr)
 {
   if (host != nullptr)

@@ -41,7 +41,7 @@ TAO::HTIOP::Endpoint::object_addr () const
             }
           else
             {
-              endpoint->object_addr_set_ = 1;
+              endpoint->object_addr_set_ = true;
             }
         }
     }

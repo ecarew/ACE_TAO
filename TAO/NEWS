@@ -1,6 +1,25 @@
 USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
 ====================================================
 
+. Data races found by ThreadSanitizer in multi-threaded clients and
+  servers are fixed (each a real hazard on ARM and other weakly ordered
+  CPUs):
+  - TAO_Singleton and TAO_TSS_Singleton publish their instance through a
+    std::atomic pointer, as the ACE singletons now do;
+  - a transport's codeset translators, set from the codeset context of
+    each request, and TAO_Stub's profile_success_ flag are atomic;
+  - the lazily created allocators of TAO_Thread_Lane_Resources, the
+    ORB core's RootPOA adapter, endpoint selector factory, ORB
+    initializer registry and policy factory registry, and the resolved
+    address of IIOP, SSLIOP, DIOP, SCIOP, SHMIOP and HTIOP endpoints are
+    published atomically for their double-checked locking.
+  The ORB initializer and policy factory registries are also looked up
+  without holding the ORB core's lock, and ORBInitializer_Registry calls
+  the initializers' pre_init () and post_init () without holding its own
+  lock: both orders were the reverse of service initialization, which
+  holds the service repository's lock while it registers initializers
+  (potential deadlocks).
+
 . CORBA::ORB_init() destroys the ORB it was creating when an ORB
   initializer's post_init() throws or a prod host refuses to start, instead
   of leaking it with the interceptors and managers the initializers had

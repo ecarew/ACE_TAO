@@ -27,6 +27,7 @@
 #include "tao/Endpoint.h"
 #include "tao/CORBA_String.h"
 #include "ace/INET_Addr.h"
+#include <atomic>
 
 TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -135,7 +136,9 @@ private:
   mutable ACE_INET_Addr object_addr_;
 
   /// Flag to indicate if the address has been resolved and set.
-  mutable bool object_addr_set_ {};
+  /// Atomic: object_addr () checks it without the lock (double-checked
+  /// locking) and sets it only after object_addr_ is filled.
+  mutable std::atomic<bool> object_addr_set_ {false};
 
   /// DIOP Endpoints can be strung into a list.  Return the next
   /// endpoint in the list, if any.

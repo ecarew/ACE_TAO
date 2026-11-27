@@ -165,6 +165,11 @@ namespace TAO
       /// etc.
       mutable ACE_INET_Addr object_addr_;
 
+      /// Set, with release, once object_addr_ holds a usable address;
+      /// object_addr () checks it without the lock (double-checked
+      /// locking), so it is atomic.
+      mutable std::atomic<bool> object_addr_set_ {false};
+
       /// IIOP Endpoints can be strung into a list.  Return the next
       /// endpoint in the list, if any.
       TAO_SSLIOP_Endpoint *next_ {};

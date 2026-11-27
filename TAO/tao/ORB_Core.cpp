@@ -321,7 +321,7 @@ TAO_ORB_Core::~TAO_ORB_Core ()
 
   delete this->request_dispatcher_;
 
-  delete this->policy_factory_registry_;
+  delete this->policy_factory_registry_.load ();
 
   // Don't delete, is a process wide singleton shared by all orbs
   orbinitializer_registry_ = nullptr;
@@ -1737,13 +1737,20 @@ TAO_ORB_Core::policy_factory_registry_i ()
            ACE_TEXT ("PolicyFactory_Loader"));
     }
 
-  if (loader != nullptr)
-    {
-      this->policy_factory_registry_ =
-        loader->create ();
-    }
+  if (loader == nullptr)
+    return nullptr;
 
-  return this->policy_factory_registry_;
+  // The service lookup above is done without lock_, which is taken only
+  // to create the registry once.
+  ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, mon, this->lock_, nullptr);
+  TAO::PolicyFactory_Registry_Adapter *registry =
+    this->policy_factory_registry_.load ();
+  if (registry == nullptr)
+    {
+      registry = loader->create ();
+      this->policy_factory_registry_.store (registry);
+    }
+  return registry;
 }
 
 TAO_ZIOP_Adapter *
@@ -1766,8 +1773,8 @@ TAO_ORB_Core::orbinitializer_registry_i ()
 {
   // @todo The ORBInitializer_Registry is supposed to be a singleton.
 
-  // If not, lookup it up.
-  this->orbinitializer_registry_ =
+  // If not, lookup it up.  (Called without lock_; see the member.)
+  TAO::ORBInitializer_Registry_Adapter *registry =
     ACE_Dynamic_Service<TAO::ORBInitializer_Registry_Adapter>::instance
       (this->configuration (),
        ACE_TEXT ("ORBInitializer_Registry"));
@@ -1776,7 +1783,7 @@ TAO_ORB_Core::orbinitializer_registry_i ()
       // In case we build shared, try to load the PI Client library, in a
       // static build we just can't do this, so don't try it, lower layers
       // output an error then.
-  if (this->orbinitializer_registry_ == nullptr)
+  if (registry == nullptr)
     {
       this->configuration ()->process_directive (
         ACE_DYNAMIC_VERSIONED_SERVICE_DIRECTIVE ("ORBInitializer_Registry",
@@ -1784,14 +1791,15 @@ TAO_ORB_Core::orbinitializer_registry_i ()
                                        TAO_VERSION,
                                        "_make_ORBInitializer_Registry",
                                        ""));
-      this->orbinitializer_registry_ =
+      registry =
         ACE_Dynamic_Service<TAO::ORBInitializer_Registry_Adapter>::instance
           (this->configuration (),
            ACE_TEXT ("ORBInitializer_Registry"));
     }
 #endif /* !TAO_AS_STATIC_LIBS && !(ACE_VXWORKS && !__RTP__) */
 
-  return this->orbinitializer_registry_;
+  this->orbinitializer_registry_.store (registry);
+  return registry;
 }
 
 TAO_Stub_Factory *
@@ -1817,19 +1825,22 @@ TAO_Endpoint_Selector_Factory *
 TAO_ORB_Core::endpoint_selector_factory ()
 {
   // Check if there is a cached reference.
-  if (this->endpoint_selector_factory_ != nullptr)
-    return this->endpoint_selector_factory_;
+  TAO_Endpoint_Selector_Factory *factory =
+    this->endpoint_selector_factory_.load ();
+  if (factory != nullptr)
+    return factory;
 
   // If not, look in the service repository for an instance.
   const char* endpoint_selector_factory_name =
     this->orb_params ()->endpoint_selector_factory_name ();
 
-  this->endpoint_selector_factory_ =
+  factory =
     ACE_Dynamic_Service<TAO_Endpoint_Selector_Factory>::instance
       (this->configuration (),
        ACE_TEXT_CHAR_TO_TCHAR (endpoint_selector_factory_name));
+  this->endpoint_selector_factory_.store (factory);
 
-  return this->endpoint_selector_factory_;
+  return factory;
 }
 
 void

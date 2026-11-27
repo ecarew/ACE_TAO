@@ -1218,14 +1218,18 @@ private:
   /// we can move this to the connection_handler and it may more sense
   /// with the DSCP stuff around there. Do you agree?
 
-  /// Additional member values required to support codeset translation
-  TAO_Codeset_Translator_Base *char_translator_;
-  TAO_Codeset_Translator_Base *wchar_translator_;
+  /// Additional member values required to support codeset translation.
+  /// Atomic: the server side sets them from the codeset context of each
+  /// request, and requests on one transport may be dispatched on several
+  /// threads at once.
+  std::atomic<TAO_Codeset_Translator_Base *> char_translator_;
+  std::atomic<TAO_Codeset_Translator_Base *> wchar_translator_;
 
   /// The tcs_set_ flag indicates that negotiation has occurred and so the
   /// translators are correct, since a null translator is valid if both ends
-  /// are using the same codeset, whatever that codeset might be.
-  CORBA::Boolean tcs_set_;
+  /// are using the same codeset, whatever that codeset might be.  It is set
+  /// after the translator, so a thread that sees it set sees the translator.
+  std::atomic<bool> tcs_set_;
 
   /// First_request_ is true until the first request is sent or received. This
   /// is necessary since codeset context information is necessary only on the

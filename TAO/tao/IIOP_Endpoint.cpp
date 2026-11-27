@@ -108,7 +108,7 @@ TAO_IIOP_Endpoint::operator= (const TAO_IIOP_Endpoint &other)
       this->is_ipv6_decimal_ = other.is_ipv6_decimal_;
 #endif /* ACE_HAS_IPV6 */
       this->is_encodable_  = other.is_encodable_;
-      this->object_addr_set_ = other.object_addr_set_;
+      this->object_addr_set_ = other.object_addr_set_.load ();
       this->object_addr_ = other.object_addr_;
       this->preferred_path_ = other.preferred_path_;
       this->next_ = nullptr; // do not copy list membership, since we are only cloning the values
@@ -124,7 +124,7 @@ TAO_IIOP_Endpoint::TAO_IIOP_Endpoint (const TAO_IIOP_Endpoint &rhs)
   , is_ipv6_decimal_ (rhs.is_ipv6_decimal_)
 #endif /* ACE_HAS_IPV6 */
   , is_encodable_ (rhs.is_encodable_)
-  , object_addr_set_ (rhs.object_addr_set_)
+  , object_addr_set_ (rhs.object_addr_set_.load ())
   , object_addr_ (rhs.object_addr_)
   , preferred_path_  (rhs.preferred_path_)
   , next_ (nullptr)
@@ -318,14 +318,14 @@ TAO_IIOP_Endpoint::object_addr () const
   //   ...etc..
 
   // Double checked locking optimization.
-  if (!this->object_addr_set_)
+  if (!this->object_addr_set_.load (std::memory_order_acquire))
     {
       ACE_GUARD_RETURN (TAO_SYNCH_MUTEX,
                         guard,
                         this->addr_lookup_lock_,
                         this->object_addr_);
 
-      if (!this->object_addr_set_)
+      if (!this->object_addr_set_.load (std::memory_order_relaxed))
         {
           (void) this->object_addr_i ();
         }
@@ -378,7 +378,7 @@ TAO_IIOP_Endpoint::object_addr_i () const
     }
   else
     {
-      this->object_addr_set_ = true;
+      this->object_addr_set_.store (true, std::memory_order_release);
     }
 }
 

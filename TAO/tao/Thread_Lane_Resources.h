@@ -21,6 +21,7 @@
 
 #include /**/ "tao/TAO_Export.h"
 #include "tao/params.h"
+#include <atomic>
 #include "tao/Transport_Cache_Manager.h"
 
 ACE_BEGIN_VERSIONED_NAMESPACE_DECL
@@ -175,33 +176,36 @@ private:
   /// Generator of new leader threads.
   TAO_New_Leader_Generator *new_leader_generator_;
 
+  // The allocators are created on first use by whichever thread asks
+  // first (double-checked under lock_), so they are atomic.
+
   /// @name The allocators for the input CDR streams.
   //@{
-  ACE_Allocator *input_cdr_dblock_allocator_;
-  ACE_Allocator *input_cdr_buffer_allocator_;
-  ACE_Allocator *input_cdr_msgblock_allocator_;
+  std::atomic<ACE_Allocator *> input_cdr_dblock_allocator_;
+  std::atomic<ACE_Allocator *> input_cdr_buffer_allocator_;
+  std::atomic<ACE_Allocator *> input_cdr_msgblock_allocator_;
   //@}
 
   /// @name The allocators for the buffering messages in the transport.
   //@{
-  ACE_Allocator *transport_message_buffer_allocator_;
+  std::atomic<ACE_Allocator *> transport_message_buffer_allocator_;
   //@}
 
   /// @name The allocators for the output CDR streams.
   //@{
-  ACE_Allocator *output_cdr_dblock_allocator_;
-  ACE_Allocator *output_cdr_buffer_allocator_;
-  ACE_Allocator *output_cdr_msgblock_allocator_;
+  std::atomic<ACE_Allocator *> output_cdr_dblock_allocator_;
+  std::atomic<ACE_Allocator *> output_cdr_buffer_allocator_;
+  std::atomic<ACE_Allocator *> output_cdr_msgblock_allocator_;
   //@}
 
   /// @name The allocators for AMH.
   //@{
-  ACE_Allocator *amh_response_handler_allocator_;
+  std::atomic<ACE_Allocator *> amh_response_handler_allocator_;
   //@}
 
   /// @name The allocators for AMI.
   //@{
-  ACE_Allocator *ami_response_handler_allocator_;
+  std::atomic<ACE_Allocator *> ami_response_handler_allocator_;
   //@}
 };
 

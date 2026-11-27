@@ -18,6 +18,7 @@
 #include /**/ "ace/pre.h"
 
 #include "ace/TSS_T.h"
+#include <atomic>
 
 #if !defined (ACE_LACKS_PRAGMA_ONCE)
 # pragma once
@@ -63,10 +64,10 @@ protected:
   TYPE instance_;
 
   /// Pointer to the Singleton (ACE_Cleanup) instance.
-  static TAO_Singleton<TYPE, ACE_LOCK> *singleton_;
+  static std::atomic<TAO_Singleton<TYPE, ACE_LOCK> *> singleton_;
 
   /// Get pointer to the TAO Singleton instance.
-  static TAO_Singleton<TYPE, ACE_LOCK> *&instance_i ();
+  static std::atomic<TAO_Singleton<TYPE, ACE_LOCK> *> &instance_i ();
 };
 
 /**
@@ -107,10 +108,10 @@ protected:
   ACE_TSS_TYPE (TYPE) instance_;
 
   /// Pointer to the Singleton (ACE_Cleanup) instance.
-  static TAO_TSS_Singleton<TYPE, ACE_LOCK> *singleton_;
+  static std::atomic<TAO_TSS_Singleton<TYPE, ACE_LOCK> *> singleton_;
 
   /// Get pointer to the TAO TSS Singleton instance.
-  static TAO_TSS_Singleton<TYPE, ACE_LOCK> *&instance_i ();
+  static std::atomic<TAO_TSS_Singleton<TYPE, ACE_LOCK> *> &instance_i ();
 };
 
 TAO_END_VERSIONED_NAMESPACE_DECL

@@ -1158,7 +1158,8 @@ protected:
   TAO_Adapter_Registry adapter_registry_;
 
   /// An optimization for the POA.
-  TAO_Adapter *poa_adapter_;
+  /// Found on first use (double-checked under lock_), hence atomic.
+  std::atomic<TAO_Adapter *> poa_adapter_;
 
   /// The Thread Manager
   ACE_Thread_Manager tm_;
@@ -1185,7 +1186,9 @@ protected:
   /// Mutual exclusion for calling open.
   TAO_SYNCH_MUTEX open_lock_;
 
-  TAO_Endpoint_Selector_Factory *endpoint_selector_factory_;
+  /// Looked up on first use by any invoking thread, hence atomic (the
+  /// lookup always finds the same service object).
+  std::atomic<TAO_Endpoint_Selector_Factory *> endpoint_selector_factory_;
 
 #if (TAO_HAS_BUFFERING_CONSTRAINT_POLICY == 1)
 
@@ -1205,10 +1208,17 @@ protected:
   std::atomic<uint32_t> refcount_;
 
   /// Registry containing all registered policy factories.
-  TAO::PolicyFactory_Registry_Adapter *policy_factory_registry_;
+  /// Created on first use.  Atomic: the loader is looked up without
+  /// lock_ (as for orbinitializer_registry_), and only the creation is
+  /// done under it.
+  std::atomic<TAO::PolicyFactory_Registry_Adapter *> policy_factory_registry_;
 
   /// Registry containing all orb initializers
-  TAO::ORBInitializer_Registry_Adapter *orbinitializer_registry_;
+  /// Found (or loaded) on first use.  Atomic, and looked up without
+  /// lock_: the service repository serializes the lookup and the load
+  /// itself, and holding lock_ across them ordered lock_ before the
+  /// repository's lock, the reverse of service initialization.
+  std::atomic<TAO::ORBInitializer_Registry_Adapter *> orbinitializer_registry_;
 
   /// Registry containing all service context handlers
   TAO_Service_Context_Registry service_context_registry_;

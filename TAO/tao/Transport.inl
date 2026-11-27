@@ -135,34 +135,34 @@ TAO_Transport::messaging_object ()
 ACE_INLINE TAO_Codeset_Translator_Base *
 TAO_Transport::char_translator () const
 {
-  return this->char_translator_;
+  return this->char_translator_.load ();
 }
 
 ACE_INLINE TAO_Codeset_Translator_Base *
 TAO_Transport::wchar_translator () const
 {
-  return this->wchar_translator_;
+  return this->wchar_translator_.load ();
 }
 
 ACE_INLINE void
 TAO_Transport::char_translator (TAO_Codeset_Translator_Base *tf)
 {
-  this->char_translator_ = tf;
-  this->tcs_set_ = 1;
+  this->char_translator_.store (tf);
+  this->tcs_set_.store (true);
 }
 
 ACE_INLINE void
 TAO_Transport::wchar_translator (TAO_Codeset_Translator_Base *tf)
 {
-  this->wchar_translator_ = tf;
-  this->tcs_set_ = 1;
+  this->wchar_translator_.store (tf);
+  this->tcs_set_.store (true);
 }
 
 /// CodeSet negotiation
 ACE_INLINE CORBA::Boolean
 TAO_Transport::is_tcs_set() const
 {
-  return tcs_set_;
+  return this->tcs_set_.load ();
 }
 
 ACE_INLINE void

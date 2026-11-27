@@ -454,13 +454,13 @@ TAO_ORB_Core::ziop_adapter (TAO_ZIOP_Adapter *adapter)
 ACE_INLINE TAO::ORBInitializer_Registry_Adapter *
 TAO_ORB_Core::orbinitializer_registry ()
 {
-  ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, mon, this->lock_,
-                    0);
-  if (orbinitializer_registry_ == 0)
+  TAO::ORBInitializer_Registry_Adapter *const registry =
+    this->orbinitializer_registry_.load ();
+  if (registry == nullptr)
     {
       return this->orbinitializer_registry_i ();
     }
-  return this->orbinitializer_registry_;
+  return registry;
 }
 
 ACE_INLINE TAO_Service_Context_Registry &
@@ -472,13 +472,13 @@ TAO_ORB_Core::service_context_registry ()
 ACE_INLINE TAO::PolicyFactory_Registry_Adapter *
 TAO_ORB_Core::policy_factory_registry ()
 {
-  ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, mon, this->lock_,
-                    0);
-  if (policy_factory_registry_ == 0)
+  TAO::PolicyFactory_Registry_Adapter *const registry =
+    this->policy_factory_registry_.load ();
+  if (registry == nullptr)
     {
       return this->policy_factory_registry_i ();
     }
-  return this->policy_factory_registry_;
+  return registry;
 }
 
 ACE_INLINE CORBA::Object_ptr

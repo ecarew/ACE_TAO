@@ -168,7 +168,7 @@ TAO::ORB_Table::instance ()
 }
 
 #if defined (ACE_HAS_EXPLICIT_STATIC_TEMPLATE_MEMBER_INSTANTIATION)
-template TAO_Singleton<TAO::ORB_Table,TAO_SYNCH_MUTEX> * TAO_Singleton<TAO::ORB_Table,TAO_SYNCH_MUTEX>::singleton_;
+template std::atomic<TAO_Singleton<TAO::ORB_Table,TAO_SYNCH_MUTEX> *> TAO_Singleton<TAO::ORB_Table,TAO_SYNCH_MUTEX>::singleton_;
 #endif /* ACE_HAS_EXPLICIT_STATIC_TEMPLATE_MEMBER_INSTANTIATION */
 
 TAO_END_VERSIONED_NAMESPACE_DECL

@@ -414,64 +414,64 @@ TAO_Thread_Lane_Resources::finalize ()
   // may use memory from the pool..
   if (this->input_cdr_dblock_allocator_ != nullptr)
     {
-      this->input_cdr_dblock_allocator_->remove ();
-      delete this->input_cdr_dblock_allocator_;
+      this->input_cdr_dblock_allocator_.load ()->remove ();
+      delete this->input_cdr_dblock_allocator_.load ();
       this->input_cdr_dblock_allocator_ = nullptr;
     }
 
   if (this->input_cdr_buffer_allocator_ != nullptr)
     {
-      this->input_cdr_buffer_allocator_->remove ();
-      delete this->input_cdr_buffer_allocator_;
+      this->input_cdr_buffer_allocator_.load ()->remove ();
+      delete this->input_cdr_buffer_allocator_.load ();
       this->input_cdr_buffer_allocator_ = nullptr;
     }
 
   if (this->input_cdr_msgblock_allocator_ != nullptr)
     {
-      this->input_cdr_msgblock_allocator_->remove ();
-      delete this->input_cdr_msgblock_allocator_;
+      this->input_cdr_msgblock_allocator_.load ()->remove ();
+      delete this->input_cdr_msgblock_allocator_.load ();
       this->input_cdr_msgblock_allocator_ = nullptr;
     }
 
   if (this->transport_message_buffer_allocator_ != nullptr)
     {
-      this->transport_message_buffer_allocator_->remove ();
-      delete this->transport_message_buffer_allocator_;
+      this->transport_message_buffer_allocator_.load ()->remove ();
+      delete this->transport_message_buffer_allocator_.load ();
       this->transport_message_buffer_allocator_ = nullptr;
     }
 
   if (this->output_cdr_dblock_allocator_ != nullptr)
     {
-      this->output_cdr_dblock_allocator_->remove ();
-      delete this->output_cdr_dblock_allocator_;
+      this->output_cdr_dblock_allocator_.load ()->remove ();
+      delete this->output_cdr_dblock_allocator_.load ();
       this->output_cdr_dblock_allocator_ = nullptr;
     }
 
   if (this->output_cdr_buffer_allocator_ != nullptr)
     {
-      this->output_cdr_buffer_allocator_->remove ();
-      delete this->output_cdr_buffer_allocator_;
+      this->output_cdr_buffer_allocator_.load ()->remove ();
+      delete this->output_cdr_buffer_allocator_.load ();
       this->output_cdr_buffer_allocator_ = nullptr;
     }
 
   if (this->output_cdr_msgblock_allocator_ != nullptr)
     {
-      this->output_cdr_msgblock_allocator_->remove ();
-      delete this->output_cdr_msgblock_allocator_;
+      this->output_cdr_msgblock_allocator_.load ()->remove ();
+      delete this->output_cdr_msgblock_allocator_.load ();
       this->output_cdr_msgblock_allocator_ = nullptr;
     }
 
   if (this->amh_response_handler_allocator_ != nullptr)
     {
-      this->amh_response_handler_allocator_->remove ();
-      delete this->amh_response_handler_allocator_;
+      this->amh_response_handler_allocator_.load ()->remove ();
+      delete this->amh_response_handler_allocator_.load ();
       this->amh_response_handler_allocator_ = nullptr;
     }
 
   if (this->ami_response_handler_allocator_ != nullptr)
     {
-      this->ami_response_handler_allocator_->remove ();
-      delete this->ami_response_handler_allocator_;
+      this->ami_response_handler_allocator_.load ()->remove ();
+      delete this->ami_response_handler_allocator_.load ();
       this->ami_response_handler_allocator_ = nullptr;
     }
 }

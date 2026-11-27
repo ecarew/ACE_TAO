@@ -85,6 +85,7 @@ TAO_SSLIOP_Endpoint &
 TAO_SSLIOP_Endpoint::operator= (const TAO_SSLIOP_Endpoint &other)
 {
   this->object_addr_ = other.object_addr_;
+  this->object_addr_set_.store (other.object_addr_set_.load ());
   this->qop_ = other.qop_;
   this->trust_ = other.trust_;
   this->ssl_component_ = other.ssl_component_;
@@ -239,11 +240,7 @@ TAO_SSLIOP_Endpoint::object_addr () const
   //   ...etc..
 
   // Double checked locking optimization.
-  if (this->object_addr_.get_type () != AF_INET
-#if defined (ACE_HAS_IPV6)
-      && this->object_addr_.get_type () != AF_INET6
-#endif /* ACE_HAS_IPV6 */
-     )
+  if (!this->object_addr_set_.load (std::memory_order_acquire))
     {
       const ACE_INET_Addr &iiop_addr = this->iiop_endpoint_->object_addr ();
 
@@ -252,14 +249,17 @@ TAO_SSLIOP_Endpoint::object_addr () const
                         this->addr_lookup_lock_,
                         this->object_addr_);
 
-      if (this->object_addr_.get_type () != AF_INET
-#if defined (ACE_HAS_IPV6)
-          && this->object_addr_.get_type () != AF_INET6
-#endif /* ACE_HAS_IPV6 */
-     )
+      if (!this->object_addr_set_.load (std::memory_order_relaxed))
         {
           this->object_addr_ = iiop_addr;
           this->object_addr_.set_port_number (this->ssl_component_.port);
+          // An address that did not resolve is tried again next time.
+          if (this->object_addr_.get_type () == AF_INET
+#if defined (ACE_HAS_IPV6)
+              || this->object_addr_.get_type () == AF_INET6
+#endif /* ACE_HAS_IPV6 */
+             )
+            this->object_addr_set_.store (true, std::memory_order_release);
         }
     }
 
