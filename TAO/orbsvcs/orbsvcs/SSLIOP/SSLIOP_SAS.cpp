@@ -763,6 +763,7 @@ SAS_Target::process (PortableInterceptor::ServerRequestInfo_ptr ri,
         {
           caller.groups = pac.groups;
           caller.groups_authority = TAO::SSLIOP::Kerberos::realm_of (client);
+          caller.user_sid = pac.user_sid;
         }
       final_token = reply;
       mech_name = "krb5";

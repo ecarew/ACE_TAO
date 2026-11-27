@@ -95,6 +95,10 @@ namespace TAO
       std::vector<std::string> groups;
       std::string groups_authority;
 
+      /// The account SID from that same verified ticket (its PAC's
+      /// logon information); it also belongs to @c authenticated.
+      std::string user_sid;
+
       /// Groups the GSSUP verifier gives @c authenticated (the store
       /// line's groups=, Phase 3 T3).  Like @c groups, they belong to
       /// the authenticated login, never to an asserted caller.

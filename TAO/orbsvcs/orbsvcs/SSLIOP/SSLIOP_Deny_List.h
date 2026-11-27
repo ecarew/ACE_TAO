@@ -4,7 +4,8 @@
 /**
  *  @file SSLIOP_Deny_List.h
  *
- *  Signed deny-list of certificate serials and SPIFFE IDs.
+ *  Signed deny-list of certificate serials, SPIFFE IDs, principals and
+ *  AD SIDs.
  *
  *  Revocation without CRLs or OCSP: whoever holds the deny-list signing
  *  key publishes a small text file, signed, and every service refuses a
@@ -17,7 +18,15 @@
  *    issued 2026-11-23T12:00:00Z
  *    serial 053497ED7A9571E13B25E619A39AFC45
  *    spiffe spiffe://ace-tao.test/sweeper
+ *    principal alice@CORP.EXAMPLE
+ *    sid S-1-5-21-1004336348-1177238915-682003330-1104
  *  @endcode
+ *
+ *  A principal (a Kerberos user or service, a GSSUP login, an asserted
+ *  name, case-insensitive) or a SID (an AD account or group in a verified
+ *  ticket's PAC) cuts off whoever it names on the next request, while
+ *  their ticket is still valid: an account disabled in AD keeps the
+ *  tickets it was issued, so this is the prompt way to stop them.
  *
  *  sits next to FILE.sig, the base64 signature (SHA-256 with ECDSA or
  *  RSA PKCS#1 v1.5) of its exact bytes.  security.conf keys:
@@ -58,6 +67,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <vector>
 
 TAO_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -75,7 +85,14 @@ namespace TAO
         time_t issued_time = 0;
         std::set<std::string> serials;   ///< upper-case hex, no leading zeros
         std::set<std::string> spiffe;
+        std::set<std::string> principals;  ///< lower case
+        std::set<std::string> sids;        ///< upper case
       };
+
+      /// Canonical forms, or "" if @a value is not a principal (name@REALM,
+      /// printable, no blanks) or a SID (S-1-N-N...).
+      static std::string normalize_principal (std::string const &value);
+      static std::string normalize_sid (std::string const &value);
 
       /// Parses deny-list text.
       static bool parse (std::string const &text, Content &out, std::string &error);
@@ -117,6 +134,14 @@ namespace TAO
        * or "" if it is allowed (or no list is configured).
        */
       std::string check (X509 *peer);
+
+      /**
+       * What the caller's @a names (every principal of the request:
+       * authenticated, asserted, asserter) or @a sids (the account and
+       * group SIDs of a verified ticket) match on the list ("principal X"
+       * or "sid S"), or "" if none does (or no list is configured).
+       */
+      std::string check_names (std::vector<std::string> const &names, std::vector<std::string> const &sids);
 
       /// Days since the current list was issued (-1: none loaded).
       long age_days () const;

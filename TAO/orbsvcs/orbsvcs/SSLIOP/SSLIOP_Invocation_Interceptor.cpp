@@ -213,6 +213,32 @@ TAO::SSLIOP::Server_Invocation_Interceptor::receive_request (
           TAO::Security::Caller record = impl->make_caller ();
           TAO::SSLIOP::SAS_Target::process (ri, record, true, op.in (), impl->ssl ());
 
+          // The deny-list's principals and SIDs: every name the request
+          // carries (authenticated, asserted, asserter) and the account
+          // and group SIDs of its verified ticket.  An AD account that is
+          // disabled keeps its tickets until they expire; this stops it
+          // within denylist_reload.
+          if (deny->configured ())
+            {
+              std::vector<std::string> sids = record.groups;
+              if (!record.user_sid.empty ())
+                sids.push_back (record.user_sid);
+              std::string const hit = deny->check_names (record.principals (), sids);
+              if (!hit.empty ())
+                {
+                  TAO::Security::Audit_Record rec ("authz", false, TAO::Security::Audit_Reason::PRINCIPAL_DENYLISTED);
+                  rec.field ("principal", record.effective ());
+                  if (!record.asserter.empty ())
+                    rec.field ("asserter", record.asserter);
+                  rec.field ("subject", record.subject)
+                    .field ("src", record.source)
+                    .field ("denylist_entry", hit)
+                    .field ("op", op.in ());
+                  TAO::Security::Audit_Logger::instance ()->write (rec);
+                  throw CORBA::NO_PERMISSION ();
+                }
+            }
+
           auto caller = std::make_shared<TAO::Security::Caller const> (std::move (record));
           impl->caller (caller);
 

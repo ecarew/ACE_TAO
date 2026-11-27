@@ -326,6 +326,39 @@ stop_server ();
             @leaks ? join (', ', @leaks) : 'clean', ['^clean$']);
 }
 
+# --- the deny-list names principals ---------------------------------------------------------
+# A user cut off by name while the ticket is still valid (an AD account
+# disabled keeps the tickets it was issued); case does not matter.  The
+# same entry stops the user's GSSUP login.
+my $deny = "$work/deny.list";
+sub denyconf {
+    my ($name, $from) = @_;
+    spit ("$work/$name.conf", $from . "denylist = $deny\ndenylist_signer = $certs/signer_pub.pem\n"
+                                   . "denylist_signer_sha256 = $pin\ndenylist_reload = 1\n");
+    chmod (0600, "$work/$name.conf");
+}
+sub denylist { return scalar (`$tool --conf $work/deny.conf denylist @_ $sign 2>&1`); }
+denyconf ('deny', $conf{krb});
+denylist ('add', '--principal', 'nobody@LAB.TEST');
+start_server ('deny');
+$out = call ('whoami', "krb5:$principal:$bind");
+expect ('deny-list: an unlisted Kerberos user is served', $out, ['^WHOAMI name=\S+alice\@LAB\.TEST']);
+$out = denylist ('add', '--principal', 'ALICE@lab.test');
+expect ('  ... denylist add --principal publishes the name', $out, ['version 2 issued .* 2 principal\(s\), 0 SID\(s\)']);
+sleep (2);
+$out = call ('whoami', "krb5:$principal:$bind");
+expect ('deny-list: a listed Kerberos user is refused at the next request, the ticket still valid', $out,
+        ['^whoami EXCEPTION NO_PERMISSION$'], ['^WHOAMI']);
+expect ('  (audited: PRINCIPAL_DENYLISTED, the entry named)', log_now (),
+        ['reason="PRINCIPAL_DENYLISTED" principal="alice\@LAB\.TEST" .*denylist_entry="principal alice\@lab\.test" op="whoami"']);
+$out = call ('whoami', 'gssup:alice:wonderland');
+expect ('  ... and so is the same user\'s GSSUP login', $out, ['^whoami EXCEPTION NO_PERMISSION$'], ['^WHOAMI']);
+denylist ('remove', '--principal', 'alice@LAB.TEST');
+sleep (2);
+$out = call ('whoami', "krb5:$principal:$bind");
+expect ('  ... removed from the list, the user is served again', $out, ['^WHOAMI name=\S+alice\@LAB\.TEST']);
+stop_server ();
+
 # --- krb_channel_binding = supported ---------------------------------------------------
 start_server ('loose');
 expect ('krb_channel_binding = supported warns in the self-check', slurp ($log),
@@ -486,6 +519,31 @@ if ($adskip ne '') {
     stop_server ('none');
     expect ('K4: an MIT ticket (no PAC logon information) carries no groups', slurp ("$work/krb_k3/server.log"),
             ['reason="SAS_ACCEPTED" principal="alice\@LAB\.TEST"'], ['principal="alice\@LAB\.TEST"[^\n]*groups=']);
+
+    # The deny-list names SIDs: an AD account, or a group cutting off every
+    # member, from the verified ticket's PAC.
+    denyconf ('addeny', $adconf . "csiv2_kerberos = supported\nkrb_keytab = $work/ad.keytab\n");
+    start_server ('addeny');
+    kinit_ad ('dana');
+    $out = denylist ('add', '--sid', $danasid);
+    expect ('deny-list: denylist add --sid publishes the SID', $out, ['issued .* 1 SID\(s\)']);
+    sleep (2);
+    $out = tao ('beta', '-K target=', "$adenv KRB5CCNAME=FILE:$work/ad_dana");
+    expect ('deny-list: an AD account listed by SID is refused, its ticket still valid', $out,
+            ['^ACQUIRE OK$', '^whoami EXCEPTION NO_PERMISSION$'], ['^WHOAMI']);
+    expect ('  (audited: the account SID)', log_now (),
+            ["reason=\"PRINCIPAL_DENYLISTED\" principal=\"dana\\\@AD\\.LAB\\.TEST\" .*denylist_entry=\"sid \Q$danasid\E\""]);
+    $out = tao ('beta', '-K target=', "$adenv KRB5CCNAME=FILE:$work/ad_erin");
+    expect ('  ... while another account is served', $out, ['^WHOAMI name=\S+erin\@AD\.LAB\.TEST']);
+    denylist ('remove', '--sid', $danasid);
+    denylist ('add', '--sid', $nsadmins);
+    sleep (2);
+    $out = tao ('beta', '-K target=', "$adenv KRB5CCNAME=FILE:$work/ad_dana");
+    expect ('deny-list: a group SID cuts off its members', $out, ['^whoami EXCEPTION NO_PERMISSION$'], ['^WHOAMI']);
+    expect ('  (audited: the group SID)', log_now (), ["denylist_entry=\"sid \Q$nsadmins\E\""]);
+    $out = tao ('beta', '-K target=', "$adenv KRB5CCNAME=FILE:$work/ad_erin");
+    expect ('  ... but not users outside the group', $out, ['^WHOAMI name=\S+erin\@AD\.LAB\.TEST']);
+    stop_server ('none');
 }
 
 # --- K5: Kerberos names in identity assertions (R32) -------------------------------

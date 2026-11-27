@@ -95,6 +95,9 @@ expect ('denylist check verifies it with the pinned signer', `$tool --conf $conf
 expect ('denylist add refuses a list signed by another key',
         `$tool --conf $conf denylist add --key PEM:$dir/impostor_key_enc.pem --password-file $dir/password.txt --spiffe spiffe://ace-tao.test/x 2>&1`,
         ['is not signed by this key']);
+expect ('denylist add refuses a principal without a realm and a malformed SID',
+        `$tool --conf $conf denylist add $sign --principal alice 2>&1` . `$tool --conf $conf denylist add $sign --sid S-1-x 2>&1`,
+        ['not a principal \(name\@REALM\): alice', 'not a SID \(S-1-5-21-\.\.\.\): S-1-x']);
 
 # prod refuses a deny-list whose signer is not pinned, or not the pinned one.
 if ($prod) {

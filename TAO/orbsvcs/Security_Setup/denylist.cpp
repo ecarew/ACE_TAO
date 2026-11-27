@@ -3,8 +3,8 @@
 // orbsvcs/SSLIOP/SSLIOP_Deny_List.h for the format and the
 // security.conf keys).
 //
-//   denylist add    --key SPEC [--password-file F] [--file LIST] (--serial HEX | --spiffe ID | --cert PEM)...
-//   denylist remove --key SPEC [--password-file F] [--file LIST] (--serial HEX | --spiffe ID | --cert PEM)...
+//   denylist add    --key SPEC [--password-file F] [--file LIST] (--serial HEX | --spiffe ID | --cert PEM | --principal NAME@REALM | --sid SID)...
+//   denylist remove --key SPEC [--password-file F] [--file LIST] (--serial HEX | --spiffe ID | --cert PEM | --principal NAME@REALM | --sid SID)...
 //   denylist sign   --key SPEC [--password-file F] [--file LIST]
 //   denylist check  [--file LIST] [--signer PEM]
 //   denylist pin    (--signer PEM | --key SPEC [--password-file F])
@@ -47,9 +47,9 @@ namespace
 
   char const usage_text[] =
     "usage: ace-tao-setup denylist add    --key SPEC [--password-file F] [--file LIST]\n"
-    "                                     (--serial HEX | --spiffe ID | --cert PEM)... [--force]\n"
+    "                                     (--serial HEX | --spiffe ID | --cert PEM | --principal NAME@REALM | --sid SID)... [--force]\n"
     "       ace-tao-setup denylist remove --key SPEC [--password-file F] [--file LIST]\n"
-    "                                     (--serial HEX | --spiffe ID | --cert PEM)... [--force]\n"
+    "                                     (--serial HEX | --spiffe ID | --cert PEM | --principal NAME@REALM | --sid SID)... [--force]\n"
     "       ace-tao-setup denylist sign   --key SPEC [--password-file F] [--file LIST]\n"
     "       ace-tao-setup denylist check  [--file LIST] [--signer PEM]\n"
     "       ace-tao-setup denylist pin    (--signer PEM | --key SPEC [--password-file F])\n"
@@ -147,13 +147,17 @@ namespace
       s += "serial " + x + "\n";
     for (auto const &x : c.spiffe)
       s += "spiffe " + x + "\n";
+    for (auto const &x : c.principals)
+      s += "principal " + x + "\n";
+    for (auto const &x : c.sids)
+      s += "sid " + x + "\n";
     return s;
   }
 
   struct Options
   {
     std::string file, key, password_file, signer;
-    std::vector<std::string> serials, spiffe, certs;
+    std::vector<std::string> serials, spiffe, certs, principals, sids;
     bool force = false;
   };
 
@@ -171,6 +175,8 @@ namespace
         else if (a == "--serial" && more) o.serials.push_back (ACE_TEXT_ALWAYS_CHAR (argv[++i]));
         else if (a == "--spiffe" && more) o.spiffe.push_back (ACE_TEXT_ALWAYS_CHAR (argv[++i]));
         else if (a == "--cert" && more) o.certs.push_back (ACE_TEXT_ALWAYS_CHAR (argv[++i]));
+        else if (a == "--principal" && more) o.principals.push_back (ACE_TEXT_ALWAYS_CHAR (argv[++i]));
+        else if (a == "--sid" && more) o.sids.push_back (ACE_TEXT_ALWAYS_CHAR (argv[++i]));
         else if (a == "--force") o.force = true;
         else
           return usage ("denylist " + cmd + ": unknown option " + a);
@@ -206,9 +212,13 @@ namespace
     setup_audit (Reason::DENYLIST_SIGNED, {{"file", o.file}, {"version", std::to_string (c.version)},
                                            {"serials", std::to_string (c.serials.size ())},
                                            {"spiffe_ids", std::to_string (c.spiffe.size ())},
+                                           {"principals", std::to_string (c.principals.size ())},
+                                           {"sids", std::to_string (c.sids.size ())},
                                            {"change", what}});
-    ACE_OS::printf ("%s: version %ld issued %s, %zu serial(s), %zu SPIFFE ID(s); signed into %s.sig\n",
-                    o.file.c_str (), c.version, c.issued.c_str (), c.serials.size (), c.spiffe.size (), o.file.c_str ());
+    ACE_OS::printf ("%s: version %ld issued %s, %zu serial(s), %zu SPIFFE ID(s), %zu principal(s), %zu SID(s); "
+                    "signed into %s.sig\n",
+                    o.file.c_str (), c.version, c.issued.c_str (), c.serials.size (), c.spiffe.size (),
+                    c.principals.size (), c.sids.size (), o.file.c_str ());
     ACE_OS::printf ("Signer pin (denylist_signer_sha256): %s\n", Deny_List::spki_sha256 (key).c_str ());
     return EXIT_OK;
   }
@@ -222,10 +232,24 @@ namespace
       return rc;
     if (o.file.empty () || o.key.empty ())
       return usage (std::string ("denylist ") + cmd + ": --file (or denylist in the configuration) and --key are required");
-    if (o.serials.empty () && o.spiffe.empty () && o.certs.empty ())
-      return usage (std::string ("denylist ") + cmd + ": give --serial, --spiffe or --cert");
+    if (o.serials.empty () && o.spiffe.empty () && o.certs.empty () && o.principals.empty () && o.sids.empty ())
+      return usage (std::string ("denylist ") + cmd + ": give --serial, --spiffe, --cert, --principal or --sid");
 
-    std::set<std::string> serials, spiffe;
+    std::set<std::string> serials, spiffe, principals, sids;
+    for (auto const &s : o.principals)
+      {
+        std::string const n = Deny_List::normalize_principal (s);
+        if (n.empty ())
+          return refuse ("not a principal (name@REALM): " + s);
+        principals.insert (n);
+      }
+    for (auto const &s : o.sids)
+      {
+        std::string const n = Deny_List::normalize_sid (s);
+        if (n.empty ())
+          return refuse ("not a SID (S-1-5-21-...): " + s);
+        sids.insert (n);
+      }
     for (auto const &s : o.serials)
       {
         std::string const n = Deny_List::normalize_serial (s);
@@ -280,6 +304,10 @@ namespace
       changed += add ? c.serials.insert (s).second : c.serials.erase (s);
     for (auto const &s : spiffe)
       changed += add ? c.spiffe.insert (s).second : c.spiffe.erase (s);
+    for (auto const &s : principals)
+      changed += add ? c.principals.insert (s).second : c.principals.erase (s);
+    for (auto const &s : sids)
+      changed += add ? c.sids.insert (s).second : c.sids.erase (s);
     if (changed == 0)
       {
         ACE_OS::printf ("No change: %s already %s.\n", o.file.c_str (),
@@ -339,14 +367,20 @@ namespace
     if (!Deny_List::parse (text, c, error))
       return refuse (o.file + ": " + error);
     long const age = static_cast<long> ((ACE_OS::time (nullptr) - c.issued_time) / 86400);
-    ACE_OS::printf ("OK: %s version %ld issued %s (%ld day(s) ago), %zu serial(s), %zu SPIFFE ID(s)\n",
-                    o.file.c_str (), c.version, c.issued.c_str (), age, c.serials.size (), c.spiffe.size ());
+    ACE_OS::printf ("OK: %s version %ld issued %s (%ld day(s) ago), %zu serial(s), %zu SPIFFE ID(s), "
+                    "%zu principal(s), %zu SID(s)\n",
+                    o.file.c_str (), c.version, c.issued.c_str (), age, c.serials.size (), c.spiffe.size (),
+                    c.principals.size (), c.sids.size ());
     ACE_OS::printf ("Signer %s, sha256 %s%s\n", o.signer.c_str (), pin.c_str (),
                     want.empty () ? " (not pinned: set denylist_signer_sha256)" : " (pinned)");
     for (auto const &x : c.serials)
       ACE_OS::printf ("  serial %s\n", x.c_str ());
     for (auto const &x : c.spiffe)
       ACE_OS::printf ("  spiffe %s\n", x.c_str ());
+    for (auto const &x : c.principals)
+      ACE_OS::printf ("  principal %s\n", x.c_str ());
+    for (auto const &x : c.sids)
+      ACE_OS::printf ("  sid %s\n", x.c_str ());
     return EXIT_OK;
   }
 

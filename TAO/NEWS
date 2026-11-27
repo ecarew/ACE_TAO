@@ -1,6 +1,15 @@
 USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
 ====================================================
 
+. SSLIOP deny-list: principal NAME@REALM and sid S-1-... entries. A
+  listed principal (a Kerberos user or service, a GSSUP login, an asserted
+  name or its asserter; case-insensitive) or SID (the account or any group
+  SID in a verified ticket's PAC) is refused on its next request, audited
+  as PRINCIPAL_DENYLISTED, while its ticket is still valid: an account
+  disabled in Active Directory keeps the tickets it was issued, so this is
+  the prompt way to cut it off (within denylist_reload). ace-tao-setup
+  denylist add/remove take --principal and --sid.
+
 . SSLIOP Kerberos: the service holds its keys in memory. The keytab file
   is read again when it changes (renamed over, rewritten, re-permissioned)
   and its keys replace the current ones only if it passes the keytab

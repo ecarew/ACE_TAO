@@ -5,6 +5,7 @@
 #include "tao/Security_Mode.h"
 #include "tao/orbconf.h"
 
+#include "ace/OS_NS_ctype.h"
 #include "ace/Guard_T.h"
 #include "ace/OS_NS_stdio.h"
 #include "ace/OS_NS_stdlib.h"
@@ -106,6 +107,26 @@ TAO::SSLIOP::Deny_List::parse (std::string const &text, Content &out, std::strin
               return false;
             }
           out.spiffe.insert (value);
+        }
+      else if (key == "principal")
+        {
+          std::string const n = normalize_principal (value);
+          if (n.empty ())
+            {
+              error = where + "principal must be one name@REALM";
+              return false;
+            }
+          out.principals.insert (n);
+        }
+      else if (key == "sid")
+        {
+          std::string const n = normalize_sid (value);
+          if (n.empty ())
+            {
+              error = where + "sid must be a SID like S-1-5-21-...";
+              return false;
+            }
+          out.sids.insert (n);
         }
       else
         {
@@ -300,7 +321,8 @@ TAO::SSLIOP::Deny_List::load (std::string &summary)
     }
   summary = "version " + std::to_string (c.version) + " issued " + c.issued + ", "
             + std::to_string (c.serials.size ()) + " serial(s), " + std::to_string (c.spiffe.size ())
-            + " SPIFFE ID(s)";
+            + " SPIFFE ID(s), " + std::to_string (c.principals.size ()) + " principal(s), "
+            + std::to_string (c.sids.size ()) + " SID(s)";
   ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, guard, this->lock_, false);
   this->current_ = std::make_shared<Content const> (std::move (c));
   this->last_check_ = ACE_OS::time (nullptr);
@@ -384,6 +406,80 @@ TAO::SSLIOP::Deny_List::check (X509 *peer)
     if (c->spiffe.count (id) != 0)
       return id;
   return "";
+}
+
+std::string
+TAO::SSLIOP::Deny_List::check_names (std::vector<std::string> const &names, std::vector<std::string> const &sids)
+{
+  if (!this->configured ())
+    return "";
+  this->refresh ();
+  std::shared_ptr<Content const> c;
+  {
+    ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, guard, this->lock_, "");
+    c = this->current_;
+  }
+  if (!c || (c->principals.empty () && c->sids.empty ()))
+    return "";
+  for (std::string const &name : names)
+    {
+      std::string const n = normalize_principal (name);
+      if (!n.empty () && c->principals.count (n) != 0)
+        return "principal " + n;
+    }
+  for (std::string const &sid : sids)
+    {
+      std::string const n = normalize_sid (sid);
+      if (!n.empty () && c->sids.count (n) != 0)
+        return "sid " + n;
+    }
+  return "";
+}
+
+std::string
+TAO::SSLIOP::Deny_List::normalize_principal (std::string const &value)
+{
+  size_t const at = value.rfind ('@');
+  if (at == std::string::npos || at == 0 || at + 1 == value.size ())
+    return "";
+  std::string out;
+  for (char const ch : value)
+    {
+      unsigned char const u = static_cast<unsigned char> (ch);
+      if (u <= 0x20 || u >= 0x7f)
+        return "";
+      out += static_cast<char> (ACE_OS::ace_tolower (u));
+    }
+  return out;
+}
+
+std::string
+TAO::SSLIOP::Deny_List::normalize_sid (std::string const &value)
+{
+  // S-1-<authority>-<sub>[-<sub>...]: digits between the dashes.
+  if (value.size () < 5 || (value[0] != 'S' && value[0] != 's') || value[1] != '-')
+    return "";
+  size_t parts = 0;
+  size_t digits = 0;
+  for (size_t i = 2; i < value.size (); ++i)
+    {
+      char const ch = value[i];
+      if (ch >= '0' && ch <= '9')
+        {
+          if (++digits > 10)
+            return "";
+        }
+      else if (ch == '-' && digits > 0)
+        {
+          ++parts;
+          digits = 0;
+        }
+      else
+        return "";
+    }
+  if (digits == 0 || parts < 2 || value.compare (2, 2, "1-") != 0)
+    return "";
+  return "S" + value.substr (1);
 }
 
 long

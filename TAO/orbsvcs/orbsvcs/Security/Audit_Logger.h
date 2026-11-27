@@ -77,6 +77,7 @@ namespace TAO
       constexpr char const CERT_ISSUED[] = "CERT_ISSUED";
       constexpr char const CERT_RENEWED[] = "CERT_RENEWED";
       constexpr char const CERT_DENYLISTED[] = "CERT_DENYLISTED";
+      constexpr char const PRINCIPAL_DENYLISTED[] = "PRINCIPAL_DENYLISTED";
       constexpr char const DENYLIST_LOADED[] = "DENYLIST_LOADED";
       constexpr char const DENYLIST_REJECTED[] = "DENYLIST_REJECTED";
       constexpr char const DENYLIST_SIGNED[] = "DENYLIST_SIGNED";
