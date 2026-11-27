@@ -8,6 +8,12 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
   The ORB core's init() now also runs inside ORB_init's cleanup, so the
   interceptors the initializers registered are destroyed when it fails.
 
+. SSLIOP: the credentials acquirer factories are deleted when registering
+  them with the CredentialsCurator throws (the guard meant for this held
+  nothing), and -SSLAcceptTimeout refuses NaN, infinity, out-of-range
+  values and trailing text (a NaN reached ACE_Time_Value::set(double),
+  undefined behaviour).
+
 . Notification Service: discarding by PriorityOrder no longer dereferences
   a null message block when the dequeue fails (empty or deactivated
   queue); found by the clang static analyzer.

@@ -167,17 +167,25 @@ TAO::SSLIOP::ORBInitializer::post_init (
   TAO::SL3::CredentialsCurator_var tao_curator =
     TAO::SL3::CredentialsCurator::_narrow (curator.in ());
 
+  if (CORBA::is_nil (tao_curator.in ()))
+    throw CORBA::INTERNAL ();
+
+  // The curator owns a factory once register_acquirer_factory () returns;
+  // when it throws (a method already registered, a failed bind) the
+  // factory is still ours to delete.
+  auto const register_factory =
+    [&tao_curator] (char const *method, TAO::SL3::CredentialsAcquirerFactory *factory)
+    {
+      std::unique_ptr<TAO::SL3::CredentialsAcquirerFactory> safe_factory (factory);
+      tao_curator->register_acquirer_factory (method, factory);
+      (void) safe_factory.release ();
+    };
+
   TAO::SSLIOP::CredentialsAcquirerFactory * factory = nullptr;
   ACE_NEW_THROW_EX (factory,
                     TAO::SSLIOP::CredentialsAcquirerFactory,
                     CORBA::NO_MEMORY ());
-
-  std::unique_ptr<TAO::SSLIOP::CredentialsAcquirerFactory> safe_factory;
-
-  tao_curator->register_acquirer_factory ("SL3TLS", factory);
-
-  (void) safe_factory.release ();  // CredentialsCurator now owns
-                                   // CredentialsAcquirerFactory.
+  register_factory ("SL3TLS", factory);
 
   // Keys held in a keystore (PKCS#11 token, TPM, Secure Enclave), named
   // by an OpenSSL store URI in the AuthData key filename.
@@ -185,21 +193,21 @@ TAO::SSLIOP::ORBInitializer::post_init (
   ACE_NEW_THROW_EX (keystore_factory,
                     TAO::SSLIOP::CredentialsAcquirerFactory (true),
                     CORBA::NO_MEMORY ());
-  tao_curator->register_acquirer_factory ("SL3TLSKeystore", keystore_factory);
+  register_factory ("SL3TLSKeystore", keystore_factory);
 
   // CSIv2 GSSUP username/password credentials for this ORB's calls (W6).
   TAO::SSLIOP::GSSUP_CredentialsAcquirerFactory *gssup_factory = nullptr;
   ACE_NEW_THROW_EX (gssup_factory,
                     TAO::SSLIOP::GSSUP_CredentialsAcquirerFactory,
                     CORBA::NO_MEMORY ());
-  tao_curator->register_acquirer_factory ("SL3GSSUP", gssup_factory);
+  register_factory ("SL3GSSUP", gssup_factory);
 
   // CSIv2 Kerberos credentials from a ticket cache or client keytab (K3).
   TAO::SSLIOP::Kerberos_CredentialsAcquirerFactory *krb_factory = nullptr;
   ACE_NEW_THROW_EX (krb_factory,
                     TAO::SSLIOP::Kerberos_CredentialsAcquirerFactory,
                     CORBA::NO_MEMORY ());
-  tao_curator->register_acquirer_factory ("SL3Kerberos", krb_factory);
+  register_factory ("SL3Kerberos", krb_factory);
 
   // The client side of the CSIv2 SAS protocol (R15), on remote calls.
   CORBA::Object_var cur_obj = info->resolve_initial_references ("SSLIOPCurrent");

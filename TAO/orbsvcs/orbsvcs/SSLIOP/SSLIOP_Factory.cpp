@@ -17,6 +17,7 @@
 #include "ace/Read_Buffer.h"
 #include "ace/Malloc_Base.h"
 #include "ace/OS_NS_stdio.h"
+#include "ace/OS_NS_stdlib.h"
 #include "ace/OS_NS_string.h"
 #include "ace/OS_NS_unistd.h"
 #if defined (ACE_WIN32)
@@ -928,10 +929,15 @@ TAO::SSLIOP::Protocol_Factory::init (int argc, ACE_TCHAR* argv[])
           curarg++;
           if (curarg < argc)
             {
-              float timeout = 0;
+              std::string const arg = ACE_TEXT_ALWAYS_CHAR (argv[curarg]);
+              char *end = nullptr;
+              double const timeout = ACE_OS::strtod (arg.c_str (), &end);
 
-              if (sscanf (ACE_TEXT_ALWAYS_CHAR(argv[curarg]), "%f", &timeout) != 1
-                  || timeout < 0)
+              // Seconds, not negative.  Trailing text, NaN, infinity and
+              // values too large for ACE_Time_Value are refused (converting
+              // those to an integer is undefined behaviour).
+              if (end == arg.c_str () || *end != '\0'
+                  || !(timeout >= 0) || timeout > 2147483647.0)
                 ORBSVCS_ERROR_RETURN ((LM_ERROR,
                                    "ERROR: Invalid -SSLAcceptTimeout "
                                    "value: %s.\n",
