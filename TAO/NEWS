@@ -1,6 +1,10 @@
 USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
 ====================================================
 
+. Notification Service: discarding by PriorityOrder no longer dereferences
+  a null message block when the dequeue fails (empty or deactivated
+  queue); found by the clang static analyzer.
+
 . Data races found by ThreadSanitizer in multi-threaded clients and
   servers are fixed (each a real hazard on ARM and other weakly ordered
   CPUs):

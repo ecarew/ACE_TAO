@@ -472,7 +472,8 @@ TAO_Notify_Buffering_Strategy::discard (TAO_Notify_Method_Request_Queueable* met
   else if (this->discard_policy_ == CosNotification::PriorityOrder)
     {
       result = this->msg_queue_.dequeue_prio (mb);
-      if (mb->msg_priority() >= method_request->msg_priority())
+      // A failed dequeue (empty or deactivated queue) leaves mb null.
+      if (result != -1 && mb->msg_priority() >= method_request->msg_priority())
         {
           this->msg_queue_.enqueue_prio (mb);
           result = -1;
