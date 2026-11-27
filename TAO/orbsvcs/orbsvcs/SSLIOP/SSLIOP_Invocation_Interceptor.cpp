@@ -1,6 +1,8 @@
 #include "orbsvcs/Log_Macros.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Invocation_Interceptor.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Policy_Tables.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Role_Model.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Required_Rights.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Current.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Deny_List.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Access_List.h"
@@ -74,6 +76,16 @@ TAO::SSLIOP::Server_Invocation_Interceptor::Server_Invocation_Interceptor (
           tao_ad->default_caller_decision (!prod && host.get ("access_default", "allow") != "deny");
           if (TAO::SSLIOP::Access_List::instance ()->configured ())
             tao_ad->caller_policy (TAO::SSLIOP::Access_List::instance ());
+        }
+      // SecurityLevel2 RequiredRights from the signed required-rights
+      // table, when the role model is configured (Phase 3 T2, R41).
+      TAO::Security::SecurityManager *const sm =
+        dynamic_cast<TAO::Security::SecurityManager *> (this->sec2manager_.in ());
+      if (sm != nullptr && TAO::SSLIOP::Role_Model::Engine::instance ()->active ())
+        {
+          SecurityLevel2::RequiredRights_var rr;
+          ACE_NEW_THROW_EX (rr, TAO::SSLIOP::Required_Rights, CORBA::NO_MEMORY ());
+          sm->required_rights (rr.in ());
         }
     }
 }
@@ -209,8 +221,39 @@ TAO::SSLIOP::Server_Invocation_Interceptor::receive_request (
           SecurityLevel2::CredentialsList cred_list (1);
           cred_list.length (1);
           cred_list[0] = new TAO::Security::Caller_Credentials (*caller, caller->authenticated.empty () ? "TLS" : "TLS+GSSUP");
-          CORBA::Boolean const allowed =
-            CORBA::is_nil (ad.in ()) ? false : ad->access_allowed_caller (cred_list, path.c_str (), op.in ());
+          // The role model (Phase 3 T2, R38) when roles_dir is set: the
+          // interim list's explicit denies first, then the three tables.
+          // Otherwise the interim access list decides (Phase 2 R25).
+          TAO::SSLIOP::Role_Model::Engine *const engine = TAO::SSLIOP::Role_Model::Engine::instance ();
+          bool const role_model = engine->active ();
+          TAO::SSLIOP::Role_Model::Decision rd;
+          std::string versions;
+          std::string interface_id;
+          bool acl_denied = false;
+          long acl_version = 0;
+          CORBA::Boolean allowed = false;
+          if (role_model)
+            {
+              try
+                {
+                  CORBA::String_var rid = ri->target_most_derived_interface ();
+                  interface_id = rid.in ();
+                }
+              catch (CORBA::Exception const &)
+                {
+                  // Unknown interface: no rights line covers it.
+                }
+              TAO::SSLIOP::Access_List *const acl = TAO::SSLIOP::Access_List::instance ();
+              if (acl->configured () && acl->denies (*caller, path.c_str (), op.in (), acl_version))
+                acl_denied = true;
+              else
+                {
+                  rd = engine->decide (*caller, interface_id, path, op.in (), versions);
+                  allowed = rd.allowed;
+                }
+            }
+          else
+            allowed = CORBA::is_nil (ad.in ()) ? false : ad->access_allowed_caller (cred_list, path.c_str (), op.in ());
 
           if (TAO_debug_level >= 3)
             ORBSVCS_DEBUG ((LM_DEBUG, "SSLIOP (%P|%t) caller %C %C %C -> %C\n",
@@ -231,9 +274,33 @@ TAO::SSLIOP::Server_Invocation_Interceptor::receive_request (
                 .field ("src", caller->source)
                 .field ("object", path)
                 .field ("op", op.in ());
-              long const v = TAO::SSLIOP::Access_List::instance ()->version ();
-              if (v > 0)
-                rec.field ("access_list_version", std::to_string (v));
+              if (role_model)
+                {
+                  // R38: the roles held, the rights required, the tables used.
+                  std::string held;
+                  for (std::string const &role : rd.roles)
+                    held += (held.empty () ? "" : ",") + role;
+                  rec.field ("interface", interface_id);
+                  if (acl_denied)
+                    rec.field ("access_list_version", std::to_string (acl_version))
+                      .text ("an explicit deny rule in the access list");
+                  else
+                    {
+                      rec.field ("roles", held.empty () ? std::string ("(none)") : held)
+                        .field ("rights_required",
+                                rd.listed ? (rd.required.any ? "any:" : "") + TAO::SSLIOP::Role_Model::rights_text (rd.required.rights)
+                                          : std::string ("(unlisted)"))
+                        .field ("domain", rd.domain)
+                        .field ("tables", versions)
+                        .text (rd.why.c_str ());
+                    }
+                }
+              else
+                {
+                  long const v = TAO::SSLIOP::Access_List::instance ()->version ();
+                  if (v > 0)
+                    rec.field ("access_list_version", std::to_string (v));
+                }
               TAO::Security::Audit_Logger::instance ()->write (rec);
             }
           if (!allowed)

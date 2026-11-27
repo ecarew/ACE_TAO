@@ -1,0 +1,236 @@
+# Recommended required rights for the TAO Notification Service (Phase 3
+# T2, R33): a draft for "ace-tao-setup rights sign --file rights-notify.txt",
+# to review and change before signing.
+#
+#   get     read: QoS, properties, filters, constraints, admins, proxies
+#   use     take part: obtain a proxy, connect, push or pull events,
+#           suspend, resume and disconnect, offer and subscription changes
+#   set     change: QoS, filters and constraints, filter callbacks,
+#           priority and lifetime filters, create and destroy filters
+#   manage  administer: create channels and admins, set a channel's admin
+#           properties, destroy channels and admins, save the topology
+#
+# With grants-notify.txt: an observer can look, a participant can publish
+# and subscribe and manage its own filters, a channel-admin can do all.
+# Requests match the target's most-derived interface; the inherit lines
+# give each interface its bases' lines.  CORBA's built-in operations need
+# get unless listed.
+
+# --- CosNotification: QoS and admin properties
+require IDL:omg.org/CosNotification/QoSAdmin:1.0  get_qos       get
+require IDL:omg.org/CosNotification/QoSAdmin:1.0  validate_qos  get
+require IDL:omg.org/CosNotification/QoSAdmin:1.0  set_qos       set
+require IDL:omg.org/CosNotification/AdminPropertiesAdmin:1.0  get_admin  get
+require IDL:omg.org/CosNotification/AdminPropertiesAdmin:1.0  set_admin  manage
+
+# --- CosNotifyFilter
+require IDL:omg.org/CosNotifyFilter/FilterAdmin:1.0  get_filter          get
+require IDL:omg.org/CosNotifyFilter/FilterAdmin:1.0  get_all_filters     get
+require IDL:omg.org/CosNotifyFilter/FilterAdmin:1.0  add_filter          set
+require IDL:omg.org/CosNotifyFilter/FilterAdmin:1.0  remove_filter       set
+require IDL:omg.org/CosNotifyFilter/FilterAdmin:1.0  remove_all_filters  set
+require IDL:omg.org/CosNotifyFilter/FilterFactory:1.0  create_filter          set
+require IDL:omg.org/CosNotifyFilter/FilterFactory:1.0  create_mapping_filter  set
+require IDL:omg.org/CosNotifyFilter/Filter:1.0  _get_constraint_grammar  get
+require IDL:omg.org/CosNotifyFilter/Filter:1.0  get_constraints          get
+require IDL:omg.org/CosNotifyFilter/Filter:1.0  get_all_constraints      get
+require IDL:omg.org/CosNotifyFilter/Filter:1.0  match                    get
+require IDL:omg.org/CosNotifyFilter/Filter:1.0  match_structured         get
+require IDL:omg.org/CosNotifyFilter/Filter:1.0  match_typed              get
+require IDL:omg.org/CosNotifyFilter/Filter:1.0  get_callbacks            get
+require IDL:omg.org/CosNotifyFilter/Filter:1.0  add_constraints          set
+require IDL:omg.org/CosNotifyFilter/Filter:1.0  modify_constraints       set
+require IDL:omg.org/CosNotifyFilter/Filter:1.0  remove_all_constraints   set
+require IDL:omg.org/CosNotifyFilter/Filter:1.0  attach_callback          set
+require IDL:omg.org/CosNotifyFilter/Filter:1.0  detach_callback          set
+require IDL:omg.org/CosNotifyFilter/Filter:1.0  destroy                  set
+require IDL:omg.org/CosNotifyFilter/MappingFilter:1.0  _get_constraint_grammar         get
+require IDL:omg.org/CosNotifyFilter/MappingFilter:1.0  _get_value_type                 get
+require IDL:omg.org/CosNotifyFilter/MappingFilter:1.0  _get_default_value              get
+require IDL:omg.org/CosNotifyFilter/MappingFilter:1.0  get_mapping_constraints         get
+require IDL:omg.org/CosNotifyFilter/MappingFilter:1.0  get_all_mapping_constraints     get
+require IDL:omg.org/CosNotifyFilter/MappingFilter:1.0  match                           get
+require IDL:omg.org/CosNotifyFilter/MappingFilter:1.0  match_structured                get
+require IDL:omg.org/CosNotifyFilter/MappingFilter:1.0  match_typed                     get
+require IDL:omg.org/CosNotifyFilter/MappingFilter:1.0  add_mapping_constraints         set
+require IDL:omg.org/CosNotifyFilter/MappingFilter:1.0  modify_mapping_constraints      set
+require IDL:omg.org/CosNotifyFilter/MappingFilter:1.0  remove_all_mapping_constraints  set
+require IDL:omg.org/CosNotifyFilter/MappingFilter:1.0  destroy                         set
+
+# --- CosEventComm and CosNotifyComm: the event flow
+require IDL:omg.org/CosEventComm/PushConsumer:1.0  push                     use
+require IDL:omg.org/CosEventComm/PushConsumer:1.0  disconnect_push_consumer use
+require IDL:omg.org/CosEventComm/PushSupplier:1.0  disconnect_push_supplier use
+require IDL:omg.org/CosEventComm/PullConsumer:1.0  disconnect_pull_consumer use
+require IDL:omg.org/CosEventComm/PullSupplier:1.0  pull                     use
+require IDL:omg.org/CosEventComm/PullSupplier:1.0  try_pull                 use
+require IDL:omg.org/CosEventComm/PullSupplier:1.0  disconnect_pull_supplier use
+require IDL:omg.org/CosNotifyComm/NotifyPublish:1.0    offer_change         use
+require IDL:omg.org/CosNotifyComm/NotifySubscribe:1.0  subscription_change  use
+inherit IDL:omg.org/CosNotifyComm/PushConsumer:1.0 IDL:omg.org/CosNotifyComm/NotifyPublish:1.0
+inherit IDL:omg.org/CosNotifyComm/PushConsumer:1.0 IDL:omg.org/CosEventComm/PushConsumer:1.0
+inherit IDL:omg.org/CosNotifyComm/PullConsumer:1.0 IDL:omg.org/CosNotifyComm/NotifyPublish:1.0
+inherit IDL:omg.org/CosNotifyComm/PullConsumer:1.0 IDL:omg.org/CosEventComm/PullConsumer:1.0
+inherit IDL:omg.org/CosNotifyComm/PullSupplier:1.0 IDL:omg.org/CosNotifyComm/NotifySubscribe:1.0
+inherit IDL:omg.org/CosNotifyComm/PullSupplier:1.0 IDL:omg.org/CosEventComm/PullSupplier:1.0
+inherit IDL:omg.org/CosNotifyComm/PushSupplier:1.0 IDL:omg.org/CosNotifyComm/NotifySubscribe:1.0
+inherit IDL:omg.org/CosNotifyComm/PushSupplier:1.0 IDL:omg.org/CosEventComm/PushSupplier:1.0
+inherit IDL:omg.org/CosNotifyComm/StructuredPushConsumer:1.0 IDL:omg.org/CosNotifyComm/NotifyPublish:1.0
+require IDL:omg.org/CosNotifyComm/StructuredPushConsumer:1.0  push_structured_event                use
+require IDL:omg.org/CosNotifyComm/StructuredPushConsumer:1.0  disconnect_structured_push_consumer  use
+inherit IDL:omg.org/CosNotifyComm/StructuredPullConsumer:1.0 IDL:omg.org/CosNotifyComm/NotifyPublish:1.0
+require IDL:omg.org/CosNotifyComm/StructuredPullConsumer:1.0  disconnect_structured_pull_consumer  use
+inherit IDL:omg.org/CosNotifyComm/StructuredPullSupplier:1.0 IDL:omg.org/CosNotifyComm/NotifySubscribe:1.0
+require IDL:omg.org/CosNotifyComm/StructuredPullSupplier:1.0  pull_structured_event                use
+require IDL:omg.org/CosNotifyComm/StructuredPullSupplier:1.0  try_pull_structured_event            use
+require IDL:omg.org/CosNotifyComm/StructuredPullSupplier:1.0  disconnect_structured_pull_supplier  use
+inherit IDL:omg.org/CosNotifyComm/StructuredPushSupplier:1.0 IDL:omg.org/CosNotifyComm/NotifySubscribe:1.0
+require IDL:omg.org/CosNotifyComm/StructuredPushSupplier:1.0  disconnect_structured_push_supplier  use
+inherit IDL:omg.org/CosNotifyComm/SequencePushConsumer:1.0 IDL:omg.org/CosNotifyComm/NotifyPublish:1.0
+require IDL:omg.org/CosNotifyComm/SequencePushConsumer:1.0  push_structured_events             use
+require IDL:omg.org/CosNotifyComm/SequencePushConsumer:1.0  disconnect_sequence_push_consumer  use
+inherit IDL:omg.org/CosNotifyComm/SequencePullConsumer:1.0 IDL:omg.org/CosNotifyComm/NotifyPublish:1.0
+require IDL:omg.org/CosNotifyComm/SequencePullConsumer:1.0  disconnect_sequence_pull_consumer  use
+inherit IDL:omg.org/CosNotifyComm/SequencePullSupplier:1.0 IDL:omg.org/CosNotifyComm/NotifySubscribe:1.0
+require IDL:omg.org/CosNotifyComm/SequencePullSupplier:1.0  pull_structured_events             use
+require IDL:omg.org/CosNotifyComm/SequencePullSupplier:1.0  try_pull_structured_events         use
+require IDL:omg.org/CosNotifyComm/SequencePullSupplier:1.0  disconnect_sequence_pull_supplier  use
+inherit IDL:omg.org/CosNotifyComm/SequencePushSupplier:1.0 IDL:omg.org/CosNotifyComm/NotifySubscribe:1.0
+require IDL:omg.org/CosNotifyComm/SequencePushSupplier:1.0  disconnect_sequence_push_supplier  use
+
+# --- CosEventChannelAdmin
+require IDL:omg.org/CosEventChannelAdmin/ConsumerAdmin:1.0  obtain_push_supplier  use
+require IDL:omg.org/CosEventChannelAdmin/ConsumerAdmin:1.0  obtain_pull_supplier  use
+require IDL:omg.org/CosEventChannelAdmin/SupplierAdmin:1.0  obtain_push_consumer  use
+require IDL:omg.org/CosEventChannelAdmin/SupplierAdmin:1.0  obtain_pull_consumer  use
+require IDL:omg.org/CosEventChannelAdmin/EventChannel:1.0  for_consumers  get
+require IDL:omg.org/CosEventChannelAdmin/EventChannel:1.0  for_suppliers  get
+require IDL:omg.org/CosEventChannelAdmin/EventChannel:1.0  destroy        manage
+
+# --- CosNotifyChannelAdmin: proxies
+inherit IDL:omg.org/CosNotifyChannelAdmin/ProxyConsumer:1.0 IDL:omg.org/CosNotification/QoSAdmin:1.0
+inherit IDL:omg.org/CosNotifyChannelAdmin/ProxyConsumer:1.0 IDL:omg.org/CosNotifyFilter/FilterAdmin:1.0
+require IDL:omg.org/CosNotifyChannelAdmin/ProxyConsumer:1.0  _get_MyType                get
+require IDL:omg.org/CosNotifyChannelAdmin/ProxyConsumer:1.0  _get_MyAdmin               get
+require IDL:omg.org/CosNotifyChannelAdmin/ProxyConsumer:1.0  obtain_subscription_types  get
+require IDL:omg.org/CosNotifyChannelAdmin/ProxyConsumer:1.0  validate_event_qos         get
+inherit IDL:omg.org/CosNotifyChannelAdmin/ProxySupplier:1.0 IDL:omg.org/CosNotification/QoSAdmin:1.0
+inherit IDL:omg.org/CosNotifyChannelAdmin/ProxySupplier:1.0 IDL:omg.org/CosNotifyFilter/FilterAdmin:1.0
+require IDL:omg.org/CosNotifyChannelAdmin/ProxySupplier:1.0  _get_MyType           get
+require IDL:omg.org/CosNotifyChannelAdmin/ProxySupplier:1.0  _get_MyAdmin          get
+require IDL:omg.org/CosNotifyChannelAdmin/ProxySupplier:1.0  _get_priority_filter  get
+require IDL:omg.org/CosNotifyChannelAdmin/ProxySupplier:1.0  _get_lifetime_filter  get
+require IDL:omg.org/CosNotifyChannelAdmin/ProxySupplier:1.0  obtain_offered_types  get
+require IDL:omg.org/CosNotifyChannelAdmin/ProxySupplier:1.0  validate_event_qos    get
+require IDL:omg.org/CosNotifyChannelAdmin/ProxySupplier:1.0  _set_priority_filter  set
+require IDL:omg.org/CosNotifyChannelAdmin/ProxySupplier:1.0  _set_lifetime_filter  set
+
+inherit IDL:omg.org/CosNotifyChannelAdmin/ProxyPushConsumer:1.0 IDL:omg.org/CosNotifyChannelAdmin/ProxyConsumer:1.0
+inherit IDL:omg.org/CosNotifyChannelAdmin/ProxyPushConsumer:1.0 IDL:omg.org/CosNotifyComm/PushConsumer:1.0
+require IDL:omg.org/CosNotifyChannelAdmin/ProxyPushConsumer:1.0  connect_any_push_supplier  use
+inherit IDL:omg.org/CosNotifyChannelAdmin/StructuredProxyPushConsumer:1.0 IDL:omg.org/CosNotifyChannelAdmin/ProxyConsumer:1.0
+inherit IDL:omg.org/CosNotifyChannelAdmin/StructuredProxyPushConsumer:1.0 IDL:omg.org/CosNotifyComm/StructuredPushConsumer:1.0
+require IDL:omg.org/CosNotifyChannelAdmin/StructuredProxyPushConsumer:1.0  connect_structured_push_supplier  use
+inherit IDL:omg.org/CosNotifyChannelAdmin/SequenceProxyPushConsumer:1.0 IDL:omg.org/CosNotifyChannelAdmin/ProxyConsumer:1.0
+inherit IDL:omg.org/CosNotifyChannelAdmin/SequenceProxyPushConsumer:1.0 IDL:omg.org/CosNotifyComm/SequencePushConsumer:1.0
+require IDL:omg.org/CosNotifyChannelAdmin/SequenceProxyPushConsumer:1.0  connect_sequence_push_supplier  use
+inherit IDL:omg.org/CosNotifyChannelAdmin/ProxyPullSupplier:1.0 IDL:omg.org/CosNotifyChannelAdmin/ProxySupplier:1.0
+inherit IDL:omg.org/CosNotifyChannelAdmin/ProxyPullSupplier:1.0 IDL:omg.org/CosNotifyComm/PullSupplier:1.0
+require IDL:omg.org/CosNotifyChannelAdmin/ProxyPullSupplier:1.0  connect_any_pull_consumer  use
+inherit IDL:omg.org/CosNotifyChannelAdmin/StructuredProxyPullSupplier:1.0 IDL:omg.org/CosNotifyChannelAdmin/ProxySupplier:1.0
+inherit IDL:omg.org/CosNotifyChannelAdmin/StructuredProxyPullSupplier:1.0 IDL:omg.org/CosNotifyComm/StructuredPullSupplier:1.0
+require IDL:omg.org/CosNotifyChannelAdmin/StructuredProxyPullSupplier:1.0  connect_structured_pull_consumer  use
+inherit IDL:omg.org/CosNotifyChannelAdmin/SequenceProxyPullSupplier:1.0 IDL:omg.org/CosNotifyChannelAdmin/ProxySupplier:1.0
+inherit IDL:omg.org/CosNotifyChannelAdmin/SequenceProxyPullSupplier:1.0 IDL:omg.org/CosNotifyComm/SequencePullSupplier:1.0
+require IDL:omg.org/CosNotifyChannelAdmin/SequenceProxyPullSupplier:1.0  connect_sequence_pull_consumer  use
+inherit IDL:omg.org/CosNotifyChannelAdmin/ProxyPullConsumer:1.0 IDL:omg.org/CosNotifyChannelAdmin/ProxyConsumer:1.0
+inherit IDL:omg.org/CosNotifyChannelAdmin/ProxyPullConsumer:1.0 IDL:omg.org/CosNotifyComm/PullConsumer:1.0
+require IDL:omg.org/CosNotifyChannelAdmin/ProxyPullConsumer:1.0  connect_any_pull_supplier  use
+require IDL:omg.org/CosNotifyChannelAdmin/ProxyPullConsumer:1.0  suspend_connection         use
+require IDL:omg.org/CosNotifyChannelAdmin/ProxyPullConsumer:1.0  resume_connection          use
+inherit IDL:omg.org/CosNotifyChannelAdmin/StructuredProxyPullConsumer:1.0 IDL:omg.org/CosNotifyChannelAdmin/ProxyConsumer:1.0
+inherit IDL:omg.org/CosNotifyChannelAdmin/StructuredProxyPullConsumer:1.0 IDL:omg.org/CosNotifyComm/StructuredPullConsumer:1.0
+require IDL:omg.org/CosNotifyChannelAdmin/StructuredProxyPullConsumer:1.0  connect_structured_pull_supplier  use
+require IDL:omg.org/CosNotifyChannelAdmin/StructuredProxyPullConsumer:1.0  suspend_connection                use
+require IDL:omg.org/CosNotifyChannelAdmin/StructuredProxyPullConsumer:1.0  resume_connection                 use
+inherit IDL:omg.org/CosNotifyChannelAdmin/SequenceProxyPullConsumer:1.0 IDL:omg.org/CosNotifyChannelAdmin/ProxyConsumer:1.0
+inherit IDL:omg.org/CosNotifyChannelAdmin/SequenceProxyPullConsumer:1.0 IDL:omg.org/CosNotifyComm/SequencePullConsumer:1.0
+require IDL:omg.org/CosNotifyChannelAdmin/SequenceProxyPullConsumer:1.0  connect_sequence_pull_supplier  use
+require IDL:omg.org/CosNotifyChannelAdmin/SequenceProxyPullConsumer:1.0  suspend_connection              use
+require IDL:omg.org/CosNotifyChannelAdmin/SequenceProxyPullConsumer:1.0  resume_connection               use
+inherit IDL:omg.org/CosNotifyChannelAdmin/ProxyPushSupplier:1.0 IDL:omg.org/CosNotifyChannelAdmin/ProxySupplier:1.0
+inherit IDL:omg.org/CosNotifyChannelAdmin/ProxyPushSupplier:1.0 IDL:omg.org/CosNotifyComm/PushSupplier:1.0
+require IDL:omg.org/CosNotifyChannelAdmin/ProxyPushSupplier:1.0  connect_any_push_consumer  use
+require IDL:omg.org/CosNotifyChannelAdmin/ProxyPushSupplier:1.0  suspend_connection         use
+require IDL:omg.org/CosNotifyChannelAdmin/ProxyPushSupplier:1.0  resume_connection          use
+inherit IDL:omg.org/CosNotifyChannelAdmin/StructuredProxyPushSupplier:1.0 IDL:omg.org/CosNotifyChannelAdmin/ProxySupplier:1.0
+inherit IDL:omg.org/CosNotifyChannelAdmin/StructuredProxyPushSupplier:1.0 IDL:omg.org/CosNotifyComm/StructuredPushSupplier:1.0
+require IDL:omg.org/CosNotifyChannelAdmin/StructuredProxyPushSupplier:1.0  connect_structured_push_consumer  use
+require IDL:omg.org/CosNotifyChannelAdmin/StructuredProxyPushSupplier:1.0  suspend_connection                use
+require IDL:omg.org/CosNotifyChannelAdmin/StructuredProxyPushSupplier:1.0  resume_connection                 use
+inherit IDL:omg.org/CosNotifyChannelAdmin/SequenceProxyPushSupplier:1.0 IDL:omg.org/CosNotifyChannelAdmin/ProxySupplier:1.0
+inherit IDL:omg.org/CosNotifyChannelAdmin/SequenceProxyPushSupplier:1.0 IDL:omg.org/CosNotifyComm/SequencePushSupplier:1.0
+require IDL:omg.org/CosNotifyChannelAdmin/SequenceProxyPushSupplier:1.0  connect_sequence_push_consumer  use
+require IDL:omg.org/CosNotifyChannelAdmin/SequenceProxyPushSupplier:1.0  suspend_connection              use
+require IDL:omg.org/CosNotifyChannelAdmin/SequenceProxyPushSupplier:1.0  resume_connection               use
+
+# --- CosNotifyChannelAdmin: admins, channel, factory
+inherit IDL:omg.org/CosNotifyChannelAdmin/ConsumerAdmin:1.0 IDL:omg.org/CosNotification/QoSAdmin:1.0
+inherit IDL:omg.org/CosNotifyChannelAdmin/ConsumerAdmin:1.0 IDL:omg.org/CosNotifyComm/NotifySubscribe:1.0
+inherit IDL:omg.org/CosNotifyChannelAdmin/ConsumerAdmin:1.0 IDL:omg.org/CosNotifyFilter/FilterAdmin:1.0
+inherit IDL:omg.org/CosNotifyChannelAdmin/ConsumerAdmin:1.0 IDL:omg.org/CosEventChannelAdmin/ConsumerAdmin:1.0
+require IDL:omg.org/CosNotifyChannelAdmin/ConsumerAdmin:1.0  _get_MyID                          get
+require IDL:omg.org/CosNotifyChannelAdmin/ConsumerAdmin:1.0  _get_MyChannel                     get
+require IDL:omg.org/CosNotifyChannelAdmin/ConsumerAdmin:1.0  _get_MyOperator                    get
+require IDL:omg.org/CosNotifyChannelAdmin/ConsumerAdmin:1.0  _get_priority_filter               get
+require IDL:omg.org/CosNotifyChannelAdmin/ConsumerAdmin:1.0  _get_lifetime_filter               get
+require IDL:omg.org/CosNotifyChannelAdmin/ConsumerAdmin:1.0  _get_pull_suppliers                get
+require IDL:omg.org/CosNotifyChannelAdmin/ConsumerAdmin:1.0  _get_push_suppliers                get
+require IDL:omg.org/CosNotifyChannelAdmin/ConsumerAdmin:1.0  get_proxy_supplier                 get
+require IDL:omg.org/CosNotifyChannelAdmin/ConsumerAdmin:1.0  obtain_notification_pull_supplier  use
+require IDL:omg.org/CosNotifyChannelAdmin/ConsumerAdmin:1.0  obtain_notification_push_supplier  use
+require IDL:omg.org/CosNotifyChannelAdmin/ConsumerAdmin:1.0  _set_priority_filter               set
+require IDL:omg.org/CosNotifyChannelAdmin/ConsumerAdmin:1.0  _set_lifetime_filter               set
+require IDL:omg.org/CosNotifyChannelAdmin/ConsumerAdmin:1.0  destroy                            manage
+inherit IDL:omg.org/CosNotifyChannelAdmin/SupplierAdmin:1.0 IDL:omg.org/CosNotification/QoSAdmin:1.0
+inherit IDL:omg.org/CosNotifyChannelAdmin/SupplierAdmin:1.0 IDL:omg.org/CosNotifyComm/NotifyPublish:1.0
+inherit IDL:omg.org/CosNotifyChannelAdmin/SupplierAdmin:1.0 IDL:omg.org/CosNotifyFilter/FilterAdmin:1.0
+inherit IDL:omg.org/CosNotifyChannelAdmin/SupplierAdmin:1.0 IDL:omg.org/CosEventChannelAdmin/SupplierAdmin:1.0
+require IDL:omg.org/CosNotifyChannelAdmin/SupplierAdmin:1.0  _get_MyID                          get
+require IDL:omg.org/CosNotifyChannelAdmin/SupplierAdmin:1.0  _get_MyChannel                     get
+require IDL:omg.org/CosNotifyChannelAdmin/SupplierAdmin:1.0  _get_MyOperator                    get
+require IDL:omg.org/CosNotifyChannelAdmin/SupplierAdmin:1.0  _get_pull_consumers                get
+require IDL:omg.org/CosNotifyChannelAdmin/SupplierAdmin:1.0  _get_push_consumers                get
+require IDL:omg.org/CosNotifyChannelAdmin/SupplierAdmin:1.0  get_proxy_consumer                 get
+require IDL:omg.org/CosNotifyChannelAdmin/SupplierAdmin:1.0  obtain_notification_pull_consumer  use
+require IDL:omg.org/CosNotifyChannelAdmin/SupplierAdmin:1.0  obtain_notification_push_consumer  use
+require IDL:omg.org/CosNotifyChannelAdmin/SupplierAdmin:1.0  destroy                            manage
+inherit IDL:omg.org/CosNotifyChannelAdmin/EventChannel:1.0 IDL:omg.org/CosNotification/QoSAdmin:1.0
+inherit IDL:omg.org/CosNotifyChannelAdmin/EventChannel:1.0 IDL:omg.org/CosNotification/AdminPropertiesAdmin:1.0
+inherit IDL:omg.org/CosNotifyChannelAdmin/EventChannel:1.0 IDL:omg.org/CosEventChannelAdmin/EventChannel:1.0
+require IDL:omg.org/CosNotifyChannelAdmin/EventChannel:1.0  _get_MyFactory               get
+require IDL:omg.org/CosNotifyChannelAdmin/EventChannel:1.0  _get_default_consumer_admin  get
+require IDL:omg.org/CosNotifyChannelAdmin/EventChannel:1.0  _get_default_supplier_admin  get
+require IDL:omg.org/CosNotifyChannelAdmin/EventChannel:1.0  _get_default_filter_factory  get
+require IDL:omg.org/CosNotifyChannelAdmin/EventChannel:1.0  get_consumeradmin            get
+require IDL:omg.org/CosNotifyChannelAdmin/EventChannel:1.0  get_supplieradmin            get
+require IDL:omg.org/CosNotifyChannelAdmin/EventChannel:1.0  get_all_consumeradmins       get
+require IDL:omg.org/CosNotifyChannelAdmin/EventChannel:1.0  get_all_supplieradmins       get
+require IDL:omg.org/CosNotifyChannelAdmin/EventChannel:1.0  new_for_consumers            manage
+require IDL:omg.org/CosNotifyChannelAdmin/EventChannel:1.0  new_for_suppliers            manage
+require IDL:omg.org/CosNotifyChannelAdmin/EventChannelFactory:1.0  get_all_channels   get
+require IDL:omg.org/CosNotifyChannelAdmin/EventChannelFactory:1.0  get_event_channel  get
+require IDL:omg.org/CosNotifyChannelAdmin/EventChannelFactory:1.0  create_channel     manage
+
+# --- TAO's NotifyExt interfaces (served by TAO's Notify Service)
+require IDL:NotifyExt/ReconnectionRegistry:1.0  register_callback    use
+require IDL:NotifyExt/ReconnectionRegistry:1.0  unregister_callback  use
+require IDL:NotifyExt/ReconnectionRegistry:1.0  is_alive             get
+inherit IDL:NotifyExt/EventChannelFactory:1.0 IDL:omg.org/CosNotifyChannelAdmin/EventChannelFactory:1.0
+inherit IDL:NotifyExt/EventChannelFactory:1.0 IDL:NotifyExt/ReconnectionRegistry:1.0
+require IDL:NotifyExt/EventChannelFactory:1.0  destroy        manage
+require IDL:NotifyExt/EventChannelFactory:1.0  save_topology  manage
+inherit IDL:NotifyExt/ConsumerAdmin:1.0 IDL:omg.org/CosNotifyChannelAdmin/ConsumerAdmin:1.0
+require IDL:NotifyExt/ConsumerAdmin:1.0  obtain_notification_push_supplier_with_qos  use
+inherit IDL:NotifyExt/SupplierAdmin:1.0 IDL:omg.org/CosNotifyChannelAdmin/SupplierAdmin:1.0
+require IDL:NotifyExt/SupplierAdmin:1.0  obtain_notification_push_consumer_with_qos  use

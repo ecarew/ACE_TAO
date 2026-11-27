@@ -66,7 +66,15 @@ TAO::Security::SecurityManager::own_credentials ()
 SecurityLevel2::RequiredRights_ptr
 TAO::Security::SecurityManager::required_rights_object ()
 {
-  throw CORBA::NO_IMPLEMENT ();
+  if (CORBA::is_nil (this->required_rights_.in ()))
+    throw CORBA::NO_IMPLEMENT ();
+  return SecurityLevel2::RequiredRights::_duplicate (this->required_rights_.in ());
+}
+
+void
+TAO::Security::SecurityManager::required_rights (SecurityLevel2::RequiredRights_ptr rr)
+{
+  this->required_rights_ = SecurityLevel2::RequiredRights::_duplicate (rr);
 }
 
 SecurityLevel2::PrincipalAuthenticator_ptr

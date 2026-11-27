@@ -1,0 +1,11 @@
+# Recommended grants for the TAO Naming Service (Phase 3 T2, R34): a draft
+# for "ace-tao-setup grants sign --file grants-naming.txt".  Roles are
+# given to principals and groups by the role map (roles table).
+#
+# These grants cover the whole service (one domain per service).  To give
+# a POA subtree its own grants, add "domain /RootPOA/..." followed by the
+# grants that apply there, and only there.
+
+grant reader     get
+grant publisher  get,set
+grant ns-admin   get,set,manage

@@ -82,7 +82,7 @@ sub tool { return scalar (`$tool --conf $tconf @_ 2>&1`); }
 my $qt = quotemeta ($tables);
 my $today = strftime ('%Y-%m-%d', gmtime (time ()));
 my $tomorrow = strftime ('%Y-%m-%d', gmtime (time () + 86400));
-spit ("$work/rights.draft", "# draft: required rights (contents come with T2)\nop Naming get\n");
+spit ("$work/rights.draft", "# required rights of the test's Who interface\nrequire IDL:Who:1.0 whoami get\n");
 spit ("$work/grants.draft", "grant reader get\n");
 spit ("$work/roles.draft", "role alice\@lab.test reader\n");
 sub plant { my ($from, $to) = @_; copy ($from, $to) || die "$from: $!"; copy ("$from.sig", "$to.sig") || die "$from.sig: $!"; }
@@ -93,7 +93,7 @@ expect ('rights sign writes a dated, signed table at version 1 (audited)', $o,
         ["^$qt/rights-$today\\.txt: table rights version 1 issued ${today}T\\S+Z, 1 line\\(s\\); signed into",
          'reason="ROLES_TABLE_SIGNED" .*table="rights"']);
 expect ('  ... its header is signed with it', slurp ("$tables/rights-$today.txt"),
-        ["^table rights\nversion 1\nissued ${today}T", '^op Naming get$']);
+        ["^table rights\nversion 1\nissued ${today}T", '^require IDL:Who:1.0 whoami get$']);
 $o = tool ("rights sign $sign --file $work/rights.draft");
 expect ('a second rights table the same day is revision .2 at version 2', $o,
         ["rights-$today\\.2\\.txt: table rights version 2 "]);
@@ -111,6 +111,9 @@ expect ('the deny-list signer may not sign policy tables (D3.7)', tool ("rights 
             scalar (`$tool --conf $work/tool_nopin.conf rights sign $deny_sign --file $work/rights.draft 2>&1`),
             ['the key is the deny-list signer: policy tables need their own key \(D3\.7\)']);
 }
+spit ("$work/bad.draft", "require IDL:Who:1.0 whoami fetch\n");
+expect ('a draft whose body does not parse is not signed', tool ("rights sign $sign --file $work/bad.draft"),
+        ['line \d+: unknown right in "fetch"'], ['signed into']);
 expect ('another key is not the pinned roles signer', tool ("rights sign --key PEM:$work/other_key.pem --file $work/rights.draft"),
         ['the key is not the pinned roles signer']);
 
@@ -173,7 +176,7 @@ sub start_server {
 }
 sub poke { return scalar (`$sas/client -ORBSvcConf $work/client.svc -k file://$d/beta.ior -c poke -m none 2>&1`); }
 sub stop_server {
-    `$sas/client -ORBSvcConf $work/client.svc -k file://$d/beta.ior -c shutdown -m none 2>&1`;
+    kill ('TERM', $pid);
     my $gone = 0;
     for (my $i = 0; $i < 50 && !$gone; ++$i) { $gone = waitpid ($pid, WNOHANG) == $pid; select (undef, undef, undef, 0.1) unless $gone; }
     if (!$gone) { kill ('KILL', $pid); waitpid ($pid, 0); print STDERR "ERROR: server did not shut down\n"; $status = 1; }
@@ -245,6 +248,143 @@ if ($prod) {
     expect ('a missing table is reported by the self-check', run_once ('partial'),
             ['WARN roles: policy tables incomplete \(rights v2, grants missing, roles v1\)']);
 }
+
+
+# --- T2: the decision (R33, R34, R38, R41) ------------------------------------------------
+my $t2 = "$work/t2tables";
+mkdir $t2;
+spit ("$work/t2_rights.draft", "require IDL:Who:1.0 whoami get\nrequire IDL:Who:1.0 poke set\n"
+                             . "require IDL:Who:1.0 shutdown manage\n");
+spit ("$work/t2_grants.draft", "grant reader get\ngrant writer get,set\ngrant admin get,set,manage,use\n"
+                             . "domain /RootPOA/Admin\ngrant admin get,set,manage,use\n");
+spit ("$work/t2_roles.draft", "role spiffe://ace-tao.test/client reader\nrole alice\@lab.test writer\n");
+tool ("$_ sign $sign --file $work/t2_$_.draft --dir $t2") foreach qw(rights grants roles);
+sub decide {
+    my ($who, $op, $object) = @_;
+    $object = '/RootPOA/Who/alpha' unless defined $object;
+    return tool ("roles test --dir $t2 --principal $who --interface IDL:Who:1.0 --op $op --object $object");
+}
+expect ('roles test: a role holding the required right is allowed', decide ('spiffe://ace-tao.test/client', 'whoami'),
+        ['^ALLOWED: ', '^  roles reader; requires get; service domain']);
+expect ('roles test: ... and refused when it lacks it', decide ('spiffe://ace-tao.test/client', 'poke'),
+        ['^REFUSED: ', 'roles reader; requires set; service domain; roles hold get in the service domain, set required']);
+expect ('roles test: another role grants it', decide ('alice@lab.test', 'poke'), ['^ALLOWED: ', 'roles writer; requires set']);
+expect ('roles test: an operation not in the rights table is refused', decide ('alice@lab.test', 'relay'),
+        ['^REFUSED: ', 'requires \(not listed\); .*not in the required-rights table']);
+expect ('roles test: a built-in operation needs get by default', decide ('spiffe://ace-tao.test/client', '_is_a'),
+        ['^ALLOWED: ', 'requires get']);
+expect ('roles test: a POA domain has only its own grants', decide ('alice@lab.test', 'whoami', '/RootPOA/Admin/console'),
+        ['^REFUSED: ', '/RootPOA/Admin domain']);
+expect ('roles test: a caller with no role is refused', decide ('carol@lab.test', '_non_existent'),
+        ['^REFUSED: ', 'the caller has no role']);
+
+my $t2acl = "$work/t2_access.list";
+spit ($t2acl, "version 0\nissued 2026-01-01T00:00:00Z\ndeny alice\@lab.test /RootPOA/Who/beta whoami\n");
+$o = `$tool --conf /dev/null access sign $deny_sign --file $t2acl --bump 2>&1`;
+die "access sign failed:\n$o" unless $o =~ /signed into/;
+(my $t2base = $base) =~ s/^access_list = .*$/access_list = $t2acl/m;
+spit ("$work/t2.conf", $t2base . "audit_grants = on\ncsiv2 = supported\ncsiv2_gssup = supported\ngssup_target = \@lab.test\n"
+                      . "roles_dir = $t2\nroles_signer = $work/roles_pub.pem\nroles_signer_sha256 = $rpin\n");
+spit ("$work/t2rr.conf", $t2base . "roles_dir = $t2\nroles_signer = $work/roles_pub.pem\nroles_signer_sha256 = $rpin\n");
+spit ("$work/t2test.conf", "mode = test\naudit_sink = stderr\ntime_sync_wait = 0\n"
+                         . "roles_dir = $t2\nroles_signer = $work/roles_pub.pem\nroles_signer_sha256 = $rpin\n");
+spit ("$work/client.conf", "mode = test\naudit_sink = stderr\ntime_sync_wait = 0\n");
+spit ("$work/pw", "wonderland\n");
+chmod (0600, "$work/t2.conf", "$work/t2rr.conf", "$work/t2test.conf", "$work/client.conf", "$work/pw");
+sub call {
+    my ($obj, $what, $extra) = @_;
+    $extra = '' unless defined $extra;
+    return scalar (`ACE_TAO_SECURITY_CONF=$work/client.conf $sas/client -ORBSvcConf $work/client.svc -k file://$d/$obj.ior -c $what -m none $extra 2>&1`);
+}
+my $alice = "-g alice\@lab.test:file:$work/pw";
+
+start_server ('t2');
+expect ('the service starts with the role model and no access-list allow rules', slurp ($log),
+        ['SERVER READY', 'checks: \d+ ok, \d+ warn, 0 fail', 'roles=v\d+/v\d+/v\d+']);
+expect ('a certificate caller with role reader may call whoami', call ('alpha', 'whoami'), ['^WHOAMI ']);
+expect ('  ... but not poke, which needs set', call ('alpha', 'poke'), ['^poke EXCEPTION NO_PERMISSION$']);
+expect ('alice (GSSUP, role writer) may poke', call ('alpha', 'poke', $alice), ['^POKE OK$']);
+call ('alpha', 'shutdown', $alice);   # oneway: a refusal shows only in the audit record
+expect ('  ... nor relay, which no rights line covers', call ('alpha', 'relay', "$alice -r file://$d/beta.ior"),
+        ['^relay EXCEPTION NO_PERMISSION$']);
+expect ('an explicit deny in the access list wins over her roles', call ('beta', 'whoami', $alice),
+        ['^whoami EXCEPTION NO_PERMISSION$']);
+$o = log_now ();
+expect ('  (audited: roles held, rights required, domain and table versions)', $o,
+        ['reason="ACCESS_DENIED" principal="spiffe://ace-tao\.test/client" .*op="poke" interface="IDL:Who:1\.0" roles="reader" rights_required="set" domain="service" tables="rights v\d+, grants v\d+, roles v\d+"\] roles hold get in the service domain, set required',
+         'reason="ACCESS_DENIED" principal="alice\@lab\.test" .*op="shutdown" .*rights_required="manage" domain="service"',
+         'reason="ACCESS_GRANTED" principal="alice\@lab\.test" .*op="poke" interface="IDL:Who:1\.0" roles="reader,writer" rights_required="set"',
+         'reason="ACCESS_DENIED" principal="alice\@lab\.test" .*op="relay" .*rights_required="\(unlisted\)".*\] the operation is not in the required-rights table',
+         'reason="ACCESS_DENIED" principal="alice\@lab\.test" .*object="/RootPOA/Who/beta" op="whoami" interface="IDL:Who:1\.0" access_list_version="1"\] an explicit deny rule in the access list']);
+stop_server ();
+
+# The Naming Service's recommended tables, as shipped (R33): gate G6
+# offline, through NamingContextExt, which inherits NamingContext's lines.
+my $shipped = "$ENV{TAO_ROOT}/orbsvcs/Security_Setup/tables";
+my $nt = "$work/naming";
+mkdir $nt;
+spit ("$work/naming_roles.draft", "role spiffe://ace-tao.test/reader reader\nrole spiffe://ace-tao.test/publisher publisher\n"
+                                . "role spiffe://ace-tao.test/admin ns-admin\n");
+expect ('the shipped Naming rights and grants drafts sign cleanly',
+        tool ("rights sign $sign --file $shipped/rights-naming.txt --dir $nt")
+        . tool ("grants sign $sign --file $shipped/grants-naming.txt --dir $nt")
+        . tool ("roles sign $sign --file $work/naming_roles.draft --dir $nt"),
+        ['table rights version \d+ .*signed into', 'table grants version \d+ .*signed into', 'table roles version \d+ .*signed into']);
+sub ns {
+    my ($who, $op) = @_;
+    return tool ("roles test --dir $nt --principal spiffe://ace-tao.test/$who --interface IDL:omg.org/CosNaming/NamingContextExt:1.0 --op $op --object /RootPOA/NameService/root");
+}
+expect ('Naming: a reader can resolve (inherited) and resolve_str', ns ('reader', 'resolve') . ns ('reader', 'resolve_str'),
+        ['^ALLOWED: \S+ resolve ', '^ALLOWED: \S+ resolve_str ']);
+expect ('Naming: ... but not bind', ns ('reader', 'bind'), ['^REFUSED: ', 'requires set']);
+expect ('Naming: a publisher can bind but not destroy', ns ('publisher', 'bind') . ns ('publisher', 'destroy'),
+        ['^ALLOWED: \S+ bind ', '^REFUSED: \S+ destroy ', 'requires manage']);
+expect ('Naming: an ns-admin can destroy', ns ('admin', 'destroy'), ['^ALLOWED: \S+ destroy ']);
+# The Notification Service's recommended tables, as shipped (R33).
+my $nn = "$work/notify";
+mkdir $nn;
+spit ("$work/notify_roles.draft", "role spiffe://ace-tao.test/reader observer\nrole spiffe://ace-tao.test/publisher participant\n"
+                                . "role spiffe://ace-tao.test/admin channel-admin\n");
+expect ('the shipped Notify rights and grants drafts sign cleanly',
+        tool ("rights sign $sign --file $shipped/rights-notify.txt --dir $nn")
+        . tool ("grants sign $sign --file $shipped/grants-notify.txt --dir $nn")
+        . tool ("roles sign $sign --file $work/notify_roles.draft --dir $nn"),
+        ['table rights version \d+ .*signed into', 'table grants version \d+ .*signed into', 'table roles version \d+ .*signed into']);
+sub nf {
+    my ($who, $iface, $op) = @_;
+    return tool ("roles test --dir $nn --principal spiffe://ace-tao.test/$who --interface IDL:$iface:1.0 --op $op --object /RootPOA/NotifyService");
+}
+expect ('Notify: an observer can read QoS (inherited by ConsumerAdmin) but not obtain a proxy',
+        nf ('reader', 'omg.org/CosNotifyChannelAdmin/ConsumerAdmin', 'get_qos')
+        . nf ('reader', 'omg.org/CosNotifyChannelAdmin/ConsumerAdmin', 'obtain_notification_push_supplier'),
+        ['^ALLOWED: \S+ get_qos ', '^REFUSED: \S+ obtain_notification_push_supplier ', 'requires use']);
+expect ('Notify: a participant can connect and push (inherited) but not destroy an admin',
+        nf ('publisher', 'omg.org/CosNotifyChannelAdmin/ProxyPushSupplier', 'connect_any_push_consumer')
+        . nf ('publisher', 'omg.org/CosNotifyComm/PushConsumer', 'push')
+        . nf ('publisher', 'omg.org/CosNotifyChannelAdmin/ConsumerAdmin', 'destroy'),
+        ['^ALLOWED: \S+ connect_any_push_consumer ', '^ALLOWED: \S+ push ', '^REFUSED: \S+ destroy ', 'requires manage']);
+expect ('Notify: a channel-admin can create channels through NotifyExt::EventChannelFactory',
+        nf ('admin', 'NotifyExt/EventChannelFactory', 'create_channel'),
+        ['^ALLOWED: \S+ create_channel ']);
+spit ("$work/cycle_rights.draft", "inherit IDL:A:1.0 IDL:B:1.0\ninherit IDL:B:1.0 IDL:A:1.0\nrequire IDL:B:1.0 ping get\n");
+mkdir "$work/cycle";
+tool ("$_ sign $sign --file $work/" . ($_ eq 'rights' ? 'cycle_rights' : "t2_$_") . ".draft --dir $work/cycle") foreach qw(rights grants roles);
+expect ('an inheritance cycle in the rights table cannot loop',
+        tool ("roles test --dir $work/cycle --principal alice\@lab.test --interface IDL:A:1.0 --op pong") . tool ("roles test --dir $work/cycle --principal alice\@lab.test --interface IDL:A:1.0 --op ping"),
+        ['^REFUSED: alice\@lab\.test pong ', 'not in the required-rights table', '^ALLOWED: alice\@lab\.test ping ']);
+
+# SecurityLevel2 RequiredRights (R41).
+sub rr { my ($conf, @args) = @_; return scalar (`ACE_TAO_SECURITY_CONF=$work/$conf $dir/rr_probe -ORBSvcConf $work/server.svc @args 2>&1`); }
+expect ('RequiredRights answers from the rights table', rr ('t2rr.conf', 'IDL:Who:1.0', 'poke'), ['^RIGHTS s all$']);
+expect ('  ... a built-in operation needs get', rr ('t2rr.conf', 'IDL:Who:1.0', '_is_a'), ['^RIGHTS g all$']);
+expect ('  ... an unlisted operation has no rights', rr ('t2rr.conf', 'IDL:Who:1.0', 'relay'), ['^RIGHTS none$']);
+expect ('set_required_rights is refused in prod (audited)', rr ('t2rr.conf', 'IDL:Who:1.0', 'poke', 'set', 'gu', 'any'),
+        ['^SET NO_PERMISSION$', '^RIGHTS s all$', 'reason="REQUIRED_RIGHTS_REFUSED"']) if $prod;
+expect ('  ... and changes the in-memory requirement in test mode (audited)',
+        rr ('t2test.conf', 'IDL:Who:1.0', 'poke', 'set', 'gu', 'any'),
+        ['^SET OK$', '^RIGHTS gu any$', 'reason="REQUIRED_RIGHTS_SET" .*rights_required="any:get,use"']);
+expect ('without roles_dir there is no RequiredRights object (NO_IMPLEMENT)', rr ('client.conf', 'IDL:Who:1.0', 'poke'),
+        ['^NO_IMPLEMENT$']);
 
 rmtree ($work) if $status == 0;
 exit $status;

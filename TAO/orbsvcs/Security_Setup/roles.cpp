@@ -4,6 +4,7 @@
 //
 //   KIND sign  --key SPEC [--password-file F] --file DRAFT [--dir DIR]
 //   KIND check [--dir DIR] [--signer PEM]
+//   KIND test  --principal P --interface ID --op OP [--object PATH] [--dir DIR] [--signer PEM]
 //
 // KIND is rights, grants or roles.  sign takes a hand-edited DRAFT (its
 // body; any table, version or issued lines in it are replaced), gives it
@@ -14,14 +15,17 @@
 // unsigned.  The key must be the pinned roles signer and must not be the
 // deny-list signer (D3.7).  check shows which file a service would load
 // and why each other one is refused (exit 0 if one qualifies, else 2).
-// DIR defaults to roles_dir, PEM to roles_signer.  ("test", which
-// answers whether a caller may call an operation, comes with the
-// tables' contents in T2.)
+// DIR defaults to roles_dir, PEM to roles_signer.  test loads the three
+// tables as a service would and says whether principal P may call OP on
+// an object of interface ID (repository ID) at PATH, and why, with prod's
+// rules (exit 0 allowed, 2 refused).  The interim access list's explicit
+// denies, which a service checks first, are not consulted.
 
 #include "keys.h"
 
 #include "orbsvcs/SSLIOP/SSLIOP_Deny_List.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Policy_Tables.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Role_Model.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Signed_File.h"
 #include "orbsvcs/Security/Audit_Logger.h"
 
@@ -49,6 +53,7 @@ namespace
   char const usage_text[] =
     "usage: ace-tao-setup rights|grants|roles sign  --key SPEC [--password-file F] --file DRAFT [--dir DIR]\n"
     "       ace-tao-setup rights|grants|roles check [--dir DIR] [--signer PEM]\n"
+    "       ace-tao-setup roles test --principal P --interface ID --op OP [--object PATH] [--dir DIR]\n"
     "  sign gives DRAFT the next version and today's date and writes DIR/KIND-YYYY-MM-DD[.N].txt\n"
     "  with its .sig; check shows which file a service would load.  DIR defaults to roles_dir,\n"
     "  PEM to roles_signer; the key must match roles_signer_sha256.\n";
@@ -83,6 +88,7 @@ namespace
   struct Options
   {
     std::string file, key, password_file, signer, dir;
+    std::string principal, interface_id, op, object;
   };
 
   int
@@ -97,6 +103,10 @@ namespace
         else if (a == "--password-file" && more) o.password_file = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
         else if (a == "--signer" && more) o.signer = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
         else if (a == "--dir" && more) o.dir = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
+        else if (a == "--principal" && more) o.principal = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
+        else if (a == "--interface" && more) o.interface_id = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
+        else if (a == "--op" && more) o.op = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
+        else if (a == "--object" && more) o.object = ACE_TEXT_ALWAYS_CHAR (argv[++i]);
         else
           return usage (what + ": unknown option " + a);
       }
@@ -197,6 +207,10 @@ namespace
     Policy_Tables::Table check;
     if (!Policy_Tables::parse (text, check, error))
       return refuse (o.file + ": " + error);
+    // The syntax a service checks before loading (line numbers count the
+    // three header lines sign adds).
+    if (!TAO::SSLIOP::Role_Model::check_body (check, error))
+      return refuse (o.file + ": " + error + " (line numbers include the 3 header lines)");
 
     std::string sig;
     if (!setup_sign_text (key.get (), text, sig, error))
@@ -252,6 +266,68 @@ namespace
   }
 }
 
+namespace
+{
+  int
+  cmd_test (int argc, ACE_TCHAR *argv[])
+  {
+    namespace RM = TAO::SSLIOP::Role_Model;
+    Options o;
+    if (int const rc = parse (argc, argv, o, "roles test"))
+      return rc;
+    if (o.principal.empty () || o.interface_id.empty () || o.op.empty ())
+      return usage ("roles test: --principal, --interface and --op are required");
+    if (o.dir.empty () || o.signer.empty ())
+      return refuse ("roles test: --dir and --signer are required (or roles_dir and roles_signer)");
+    if (o.object.empty ())
+      o.object = "/RootPOA/object";
+    std::string const pin = lower (setup_conf_get ("roles_signer_sha256"));
+    std::map<std::string, long> const state = Policy_Tables::read_state (setup_conf_get ("roles_state"));
+
+    Policy_Tables::Table t[Policy_Tables::KIND_COUNT];
+    std::string versions;
+    for (int k = 0; k < Policy_Tables::KIND_COUNT; ++k)
+      {
+        Policy_Tables::Kind const kind = static_cast<Policy_Tables::Kind> (k);
+        auto const mark = state.find (Policy_Tables::kind_name (kind));
+        std::vector<Policy_Tables::Candidate> cands = Policy_Tables::list (o.dir, kind);
+        if (!Policy_Tables::choose (kind, cands, o.signer, pin, mark != state.end () ? mark->second : 0, t[k]))
+          return refuse (std::string ("no acceptable ") + Policy_Tables::kind_name (kind) + " table in " + o.dir
+                         + " (see: ace-tao-setup " + Policy_Tables::kind_name (kind) + " check)");
+        versions += (k == 0 ? "" : ", ") + std::string (Policy_Tables::kind_name (kind)) + " v"
+                    + std::to_string (t[k].version);
+      }
+    RM::Rights_Table rights;
+    RM::Grants_Table grants;
+    RM::Role_Map roles;
+    std::string error;
+    if (!RM::parse (t[0], rights, error) || !RM::parse (t[1], grants, error) || !RM::parse (t[2], roles, error))
+      return refuse (error);
+
+    // The principal as a service would see it: a SPIFFE ID, a certificate
+    // subject, or an authenticated user@realm.
+    TAO::Security::Caller caller;
+    if (o.principal.compare (0, 9, "spiffe://") == 0)
+      caller.spiffe_ids.push_back (o.principal);
+    else if (o.principal.find ('=') != std::string::npos)
+      caller.subject = o.principal;
+    else
+      caller.authenticated = o.principal;
+    RM::Decision const d = RM::decide (rights, grants, roles, caller, o.interface_id, o.object, o.op, false);
+    std::string held;
+    for (std::string const &role : d.roles)
+      held += (held.empty () ? "" : ",") + role;
+    ACE_OS::printf ("%s: %s %s on %s (%s)\n", d.allowed ? "ALLOWED" : "REFUSED", o.principal.c_str (), o.op.c_str (),
+                    o.object.c_str (), o.interface_id.c_str ());
+    ACE_OS::printf ("  roles %s; requires %s; %s domain; %s\n", held.empty () ? "(none)" : held.c_str (),
+                    d.listed ? ((d.required.any ? "any of " : "") + RM::rights_text (d.required.rights)).c_str ()
+                             : "(not listed)",
+                    d.domain.c_str (), d.why.c_str ());
+    ACE_OS::printf ("  tables: %s\n", versions.c_str ());
+    return d.allowed ? EXIT_OK : EXIT_FAIL;
+  }
+}
+
 int
 setup_tables (char const *what, int argc, ACE_TCHAR *argv[])
 {
@@ -269,6 +345,6 @@ setup_tables (char const *what, int argc, ACE_TCHAR *argv[])
   if (sub == "check")
     return cmd_check (kind, argc - 1, argv + 1);
   if (sub == "test")
-    return usage (w + " test: answers come with the tables' contents (Phase 3 T2)");
+    return cmd_test (argc - 1, argv + 1);
   return usage (w + ": unknown subcommand " + sub);
 }

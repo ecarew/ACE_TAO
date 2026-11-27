@@ -308,6 +308,29 @@ TAO::SSLIOP::Access_List::version () const
   return this->current_ ? this->current_->version : 0;
 }
 
+bool
+TAO::SSLIOP::Access_List::denies (TAO::Security::Caller const &caller,
+                                   char const *object_path,
+                                   char const *operation,
+                                   long &version)
+{
+  this->refresh ();
+  std::shared_ptr<Content const> c;
+  {
+    ACE_GUARD_RETURN (TAO_SYNCH_MUTEX, guard, this->lock_, true);
+    c = this->current_;
+  }
+  version = c ? c->version : 0;
+  if (!c)
+    return false;
+  Content deny_only = *c;
+  deny_only.rules.clear ();
+  for (Rule const &r : c->rules)
+    if (!r.allow)
+      deny_only.rules.push_back (r);
+  return !deny_only.rules.empty () && evaluate (deny_only, caller, object_path, operation) == DENY;
+}
+
 TAO::Security::Caller_Policy::Result
 TAO::SSLIOP::Access_List::decide (TAO::Security::Caller const &caller,
                                   char const *object_path,

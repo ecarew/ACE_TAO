@@ -1,0 +1,33 @@
+# Recommended required rights for the TAO Naming Service (Phase 3 T2,
+# R33): a draft for "ace-tao-setup rights sign --file rights-naming.txt",
+# to review and change before signing.  Rights: get (read), set (change
+# bindings), manage (destroy contexts), use.
+#
+# Reading names needs get; changing bindings needs set; destroying a
+# context needs manage.  With grants-naming.txt: a reader can resolve but
+# not bind, a publisher can bind but not destroy, an ns-admin can destroy.
+# CORBA's built-in operations (_is_a, _non_existent, ...) need get unless
+# listed here.
+
+require IDL:omg.org/CosNaming/NamingContext:1.0  resolve           get
+require IDL:omg.org/CosNaming/NamingContext:1.0  list              get
+require IDL:omg.org/CosNaming/NamingContext:1.0  bind              set
+require IDL:omg.org/CosNaming/NamingContext:1.0  rebind            set
+require IDL:omg.org/CosNaming/NamingContext:1.0  bind_context      set
+require IDL:omg.org/CosNaming/NamingContext:1.0  rebind_context    set
+require IDL:omg.org/CosNaming/NamingContext:1.0  unbind            set
+require IDL:omg.org/CosNaming/NamingContext:1.0  new_context       set
+require IDL:omg.org/CosNaming/NamingContext:1.0  bind_new_context  set
+require IDL:omg.org/CosNaming/NamingContext:1.0  destroy           manage
+
+# The root and other contexts TAO serves are NamingContextExt.
+inherit IDL:omg.org/CosNaming/NamingContextExt:1.0 IDL:omg.org/CosNaming/NamingContext:1.0
+require IDL:omg.org/CosNaming/NamingContextExt:1.0  resolve_str  get
+require IDL:omg.org/CosNaming/NamingContextExt:1.0  to_name      get
+require IDL:omg.org/CosNaming/NamingContextExt:1.0  to_string    get
+require IDL:omg.org/CosNaming/NamingContextExt:1.0  to_url       get
+
+# A list () iterator belongs to the caller that asked for it.
+require IDL:omg.org/CosNaming/BindingIterator:1.0  next_one  get
+require IDL:omg.org/CosNaming/BindingIterator:1.0  next_n    get
+require IDL:omg.org/CosNaming/BindingIterator:1.0  destroy   get

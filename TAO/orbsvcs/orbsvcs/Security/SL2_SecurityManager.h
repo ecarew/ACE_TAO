@@ -197,7 +197,7 @@ namespace TAO
      * @brief
      *
      */
-    class SecurityManager
+    class TAO_Security_Export SecurityManager
       : public virtual SecurityLevel2::SecurityManager,
         public virtual ::CORBA::LocalObject
     {
@@ -222,6 +222,14 @@ namespace TAO
       void remove_own_credentials (SecurityLevel2::Credentials_ptr creds) override;
       CORBA::Policy_ptr get_security_policy (CORBA::PolicyType policy_type) override;
       //@}
+
+      /**
+       * Installs the object required_rights_object() returns (Phase 3
+       * T2, R41: SSLIOP's, answering from the signed required-rights
+       * table).  Without one, required_rights_object() raises
+       * NO_IMPLEMENT.  Set while the ORB initialises.
+       */
+      void required_rights (SecurityLevel2::RequiredRights_ptr rr);
 
     protected:
       /// Destructor
@@ -248,6 +256,9 @@ namespace TAO
       /// AuditDecision instance; its channel writes to the
       /// process-wide Audit_Logger.
       SecurityLevel2::AuditDecision_var audit_decision_;
+
+      /// RequiredRights instance, if one was installed.
+      SecurityLevel2::RequiredRights_var required_rights_;
     };
   } // End SL3 namespace
 }  // End TAO namespace

@@ -123,6 +123,16 @@ namespace TAO
       /// The current list's version (0: none loaded).
       long version () const;
 
+      /**
+       * Only the list's deny rules (Phase 3 R38: under the role model the
+       * interim list keeps its explicit denies, which win).  True when one
+       * matches; @a version gets the list's version.
+       */
+      bool denies (TAO::Security::Caller const &caller,
+                   char const *object_path,
+                   char const *operation,
+                   long &version);
+
       /// Caller_Policy: refreshes, then evaluates the current list.
       Result decide (TAO::Security::Caller const &caller,
                      char const *object_path,

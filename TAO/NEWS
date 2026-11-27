@@ -154,6 +154,29 @@ USER VISIBLE CHANGES BETWEEN TAO-4.0.8 and TAO-4.0.9
   first TLS credential of such a policy's list rather than only the
   first entry. New test orbsvcs/tests/Security/SAS_Client.
 
+. Role-based access decisions (Phase 3 T2). With roles_dir set, SSLIOP
+  decides each request from the three signed tables instead of the
+  interim access list: the rights table names the Security Service
+  rights (get, set, manage, use; all or any) each operation of an
+  interface requires, matched on the target's most-derived interface,
+  with "inherit DERIVED BASE" lines so a derived interface uses its bases'
+  lines; the grants table gives each role its rights for the whole
+  service, or for a POA subtree after a "domain" line; the roles table
+  gives principals their roles. In prod an operation no line covers is
+  refused; CORBA's built-in operations need get unless listed. An access
+  list, if configured alongside, still applies its explicit deny rules
+  first. Each authz audit record names the interface, the roles held, the
+  rights required, the domain and the table versions. SecurityLevel2
+  RequiredRights answers from the rights table; set_required_rights is
+  refused in prod and applied in memory only in test mode
+  (REQUIRED_RIGHTS_SET, REQUIRED_RIGHTS_REFUSED). Table bodies are syntax
+  checked by the loader and by ace-tao-setup ... sign, and a new
+  ace-tao-setup roles test gives the decision for a principal, interface,
+  operation and object offline. Recommended tables for the Naming and
+  Notification Services ship as unsigned drafts in
+  orbsvcs/Security_Setup/tables. Groups and conditions in the role map
+  come in T3.
+
 . Signed policy tables for the role model (Phase 3 T1). A new loader,
   TAO::SSLIOP::Policy_Tables, reads the required-rights, grants and
   role-map tables from roles_dir: dated files (KIND-YYYY-MM-DD.txt, or

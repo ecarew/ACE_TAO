@@ -1,0 +1,7 @@
+// -*- MPC -*-
+project(*RR_Probe) : taoexe, orbsvcslib, security, ssliop {
+  exename = rr_probe
+  Source_Files {
+    rr_probe.cpp
+  }
+}

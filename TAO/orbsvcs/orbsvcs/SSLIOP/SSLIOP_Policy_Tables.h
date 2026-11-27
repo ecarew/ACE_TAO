@@ -135,8 +135,9 @@ namespace TAO
       /**
        * Chooses the table for @a kind among @a cands (from list()): the
        * highest version among files that verify with @a signer (pinned to
-       * @a pin if not empty), name their own kind, carry a signed issued
-       * date equal to their name's, and are not below @a floor.  Fills
+       * @a pin if not empty), name their own kind, whose body parses
+       * (Role_Model::check_body), carry a signed issued date equal to
+       * their name's, and are not below @a floor.  Fills
        * each candidate's version, accepted and why; @a out gets the
        * winner.  False if none qualifies.
        */

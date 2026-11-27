@@ -472,6 +472,9 @@ namespace
         Self_Check::contribute ("access_list", bad, ("access_default must be allow or deny, not " + dflt).c_str ());
       else if (prod && dflt == "allow")
         Self_Check::contribute ("access_list", bad, "access_default = allow: prod refuses requests no rule covers");
+      else if (!acl->configured () && TAO::SSLIOP::Policy_Tables::instance ()->configured ())
+        Self_Check::contribute ("access_list", Self_Check::CHECK_OK,
+                                "no access list: the role model decides (roles_dir), with no explicit denies");
       else if (!acl->configured ())
         Self_Check::contribute ("access_list", bad,
                                 prod ? "no access list (access_list): every TLS request would be refused"

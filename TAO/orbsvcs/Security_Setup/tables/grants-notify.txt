@@ -1,0 +1,15 @@
+# Recommended grants for the TAO Notification Service (Phase 3 T2, R34): a
+# draft for "ace-tao-setup grants sign --file grants-notify.txt".  Roles
+# are given to principals and groups by the role map (roles table).
+#
+#   observer       reads channels, admins, proxies, QoS and filters
+#   participant    also publishes and subscribes (obtains proxies, connects,
+#                  pushes and pulls) and changes its own filters and QoS
+#   channel-admin  also creates and destroys channels and admins and sets
+#                  admin properties
+#
+# These grants cover the whole service (one domain per service).
+
+grant observer       get
+grant participant    get,use,set
+grant channel-admin  get,set,manage,use

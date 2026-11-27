@@ -113,6 +113,10 @@ namespace TAO
       constexpr char const ROLES_TABLE_LOADED[] = "ROLES_TABLE_LOADED";
       constexpr char const ROLES_TABLE_REJECTED[] = "ROLES_TABLE_REJECTED";
       constexpr char const ROLES_TABLE_SIGNED[] = "ROLES_TABLE_SIGNED";
+      /// SecurityLevel2 RequiredRights::set_required_rights (T2, R41):
+      /// applied in memory (test mode) or refused (prod).
+      constexpr char const REQUIRED_RIGHTS_SET[] = "REQUIRED_RIGHTS_SET";
+      constexpr char const REQUIRED_RIGHTS_REFUSED[] = "REQUIRED_RIGHTS_REFUSED";
       // Client side (W6)
       constexpr char const SAS_CLIENT_NO_CREDENTIALS[] = "SAS_CLIENT_NO_CREDENTIALS";
       constexpr char const SAS_CLIENT_REFUSED[] = "SAS_CLIENT_REFUSED";

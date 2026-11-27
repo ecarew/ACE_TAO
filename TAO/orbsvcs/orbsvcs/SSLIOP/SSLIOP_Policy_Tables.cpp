@@ -1,5 +1,6 @@
 #include "orbsvcs/SSLIOP/SSLIOP_Policy_Tables.h"
 #include "orbsvcs/SSLIOP/SSLIOP_Signed_File.h"
+#include "orbsvcs/SSLIOP/SSLIOP_Role_Model.h"
 #include "orbsvcs/Security/Audit_Logger.h"
 
 #include "tao/Security_Mode.h"
@@ -233,6 +234,11 @@ TAO::SSLIOP::Policy_Tables::choose (Kind kind,
       if (t.kind != kind)
         {
           c.why = std::string ("its header names table \"") + kind_name (t.kind) + "\"";
+          continue;
+        }
+      if (!TAO::SSLIOP::Role_Model::check_body (t, error))
+        {
+          c.why = "its body does not parse: " + error;
           continue;
         }
       if (t.issued.compare (0, 10, c.date) != 0)
