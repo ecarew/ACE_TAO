@@ -506,9 +506,17 @@ ACE_Object_Manager::get_singleton_lock (ACE_Null_Mutex *&lock)
           object ();
     }
   else
-    // Use the Object_Manager's preallocated lock.
-    lock = ACE_Managed_Object<ACE_Null_Mutex>::get_preallocated_object
-      (ACE_Object_Manager::ACE_SINGLETON_NULL_LOCK);
+    {
+      // Use the Object_Manager's preallocated lock.  The caller's
+      // pointer is shared by every thread that gets here: set it once,
+      // under internal_lock_.
+      ACE_MT (ACE_GUARD_RETURN (ACE_Recursive_Thread_Mutex, ace_mon,
+                                *ACE_Object_Manager::instance ()->internal_lock_,
+                                -1));
+      if (lock == nullptr)
+        lock = ACE_Managed_Object<ACE_Null_Mutex>::get_preallocated_object
+          (ACE_Object_Manager::ACE_SINGLETON_NULL_LOCK);
+    }
 
   return 0;
 }
@@ -516,8 +524,10 @@ ACE_Object_Manager::get_singleton_lock (ACE_Null_Mutex *&lock)
 int
 ACE_Object_Manager::get_singleton_lock (ACE_Thread_Mutex *&lock)
 {
-  if (lock == nullptr)
-    {
+  // The caller's lock pointer is a static shared by every thread that
+  // reaches here, so once the program is multi-threaded it is read and
+  // set only under internal_lock_ (no unguarded first check).
+  {
       if (starting_up () || shutting_down ())
         {
           // The Object_Manager and its internal lock have not been
@@ -526,9 +536,10 @@ ACE_Object_Manager::get_singleton_lock (ACE_Thread_Mutex *&lock)
           // instance has been destroyed, so the internal lock is not
           // available.  Either way, we can not use double-checked
           // locking.  So, we'll leak the lock.
-          ACE_NEW_RETURN (lock,
-                          ACE_Thread_Mutex,
-                          -1);
+          if (lock == nullptr)
+            ACE_NEW_RETURN (lock,
+                            ACE_Thread_Mutex,
+                            -1);
         }
       else
         {
@@ -565,8 +576,10 @@ ACE_Object_Manager::get_singleton_lock (ACE_Thread_Mutex *&lock)
 int
 ACE_Object_Manager::get_singleton_lock (ACE_Mutex *&lock)
 {
-  if (lock == nullptr)
-    {
+  // The caller's lock pointer is a static shared by every thread that
+  // reaches here, so once the program is multi-threaded it is read and
+  // set only under internal_lock_ (no unguarded first check).
+  {
       if (starting_up ()  ||  shutting_down ())
         {
           // The Object_Manager and its internal lock have not been
@@ -576,9 +589,10 @@ ACE_Object_Manager::get_singleton_lock (ACE_Mutex *&lock)
           // available.  Either way, we can not use double-checked
           // locking.  So, we'll leak the lock.
 
-          ACE_NEW_RETURN (lock,
-                          ACE_Mutex,
-                          -1);
+          if (lock == nullptr)
+            ACE_NEW_RETURN (lock,
+                            ACE_Mutex,
+                            -1);
         }
       else
         {
@@ -637,10 +651,16 @@ ACE_Object_Manager::get_singleton_lock (ACE_Recursive_Thread_Mutex *&lock)
     }
   else
     {
-      // Use the Object_Manager's preallocated lock.
-      lock = ACE_Managed_Object<ACE_Recursive_Thread_Mutex>::
-        get_preallocated_object (ACE_Object_Manager::
-                                 ACE_SINGLETON_RECURSIVE_THREAD_LOCK);
+      // Use the Object_Manager's preallocated lock.  The caller's
+      // pointer is shared by every thread that gets here: set it once,
+      // under internal_lock_.
+      ACE_MT (ACE_GUARD_RETURN (ACE_Recursive_Thread_Mutex, ace_mon,
+                                *ACE_Object_Manager::instance ()->internal_lock_,
+                                -1));
+      if (lock == nullptr)
+        lock = ACE_Managed_Object<ACE_Recursive_Thread_Mutex>::
+          get_preallocated_object (ACE_Object_Manager::
+                                   ACE_SINGLETON_RECURSIVE_THREAD_LOCK);
     }
 
   return 0;
@@ -649,8 +669,10 @@ ACE_Object_Manager::get_singleton_lock (ACE_Recursive_Thread_Mutex *&lock)
 int
 ACE_Object_Manager::get_singleton_lock (ACE_RW_Thread_Mutex *&lock)
 {
-  if (lock == nullptr)
-    {
+  // The caller's lock pointer is a static shared by every thread that
+  // reaches here, so once the program is multi-threaded it is read and
+  // set only under internal_lock_ (no unguarded first check).
+  {
       if (starting_up () || shutting_down ())
         {
           // The Object_Manager and its internal lock have not been
@@ -660,9 +682,10 @@ ACE_Object_Manager::get_singleton_lock (ACE_RW_Thread_Mutex *&lock)
           // available.  Either way, we can not use double-checked
           // locking.  So, we'll leak the lock.
 
-          ACE_NEW_RETURN (lock,
-                          ACE_RW_Thread_Mutex,
-                          -1);
+          if (lock == nullptr)
+            ACE_NEW_RETURN (lock,
+                            ACE_RW_Thread_Mutex,
+                            -1);
         }
       else
         {

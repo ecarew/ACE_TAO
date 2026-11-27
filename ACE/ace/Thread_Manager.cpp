@@ -282,11 +282,19 @@ ACE_Thread_Descriptor::acquire_release ()
       // this thread is in the table already, it should simply acquire the
       // lock easily.
 
-      // Once we get the lock, we must have registered.
-      ACE_ASSERT (ACE_BIT_ENABLED (this->thr_state_, ACE_Thread_Manager::ACE_THR_SPAWNED));
-
       this->sync_->release ();
       // Release the lock before putting it back to freelist.
+
+#if !defined (ACE_NDEBUG) && defined (ACE_HAS_THREADS)
+      // Once we got the lock, we must have registered.  thr_state_ is
+      // changed under the thread manager's lock (wait_grp () sets
+      // ACE_THR_JOINING), not sync_, so read it under that lock.
+      if (this->tm_ != nullptr)
+        {
+          ACE_GUARD (ACE_Thread_Mutex, ace_mon, this->tm_->lock_);
+          ACE_ASSERT (ACE_BIT_ENABLED (this->thr_state_, ACE_Thread_Manager::ACE_THR_SPAWNED));
+        }
+#endif /* !ACE_NDEBUG && ACE_HAS_THREADS */
     }
 }
 

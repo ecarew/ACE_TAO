@@ -21,10 +21,12 @@ ACE_ALLOC_HOOK_DEFINE(ACE_Dynamic)
 /* static */ ACE_Dynamic *
 ACE_Dynamic::instance ()
 {
-  return ACE_TSS_Singleton<ACE_Dynamic, ACE_SYNCH_NULL_MUTEX>::instance ();
+  // A real mutex: the first ACE_Svc_Handler allocations may happen on
+  // several threads at once, and each would otherwise create the singleton.
+  return ACE_TSS_Singleton<ACE_Dynamic, ACE_SYNCH_MUTEX>::instance ();
 }
 
-ACE_SINGLETON_TEMPLATE_INSTANTIATE(ACE_TSS_Singleton, ACE_Dynamic, ACE_Null_Mutex);
+ACE_SINGLETON_TEMPLATE_INSTANTIATE(ACE_TSS_Singleton, ACE_Dynamic, ACE_SYNCH_MUTEX);
 
 
 ACE_END_VERSIONED_NAMESPACE_DECL

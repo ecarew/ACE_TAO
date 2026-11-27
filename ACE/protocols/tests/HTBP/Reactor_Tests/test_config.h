@@ -276,8 +276,7 @@ randomize (int array[], size_t size)
 typedef ACE_Singleton<ACE_Test_Output, ACE_Null_Mutex> ace_file_stream;
 
 #if defined (ACE_HAS_EXPLICIT_STATIC_TEMPLATE_MEMBER_INSTANTIATION)
-template ACE_Singleton<ACE_Test_Output, ACE_Null_Mutex> *
-ACE_Singleton<ACE_Test_Output, ACE_Null_Mutex>::singleton_;
+template std::atomic<ACE_Singleton<ACE_Test_Output, ACE_Null_Mutex> *> ACE_Singleton<ACE_Test_Output, ACE_Null_Mutex>::singleton_;
 #endif /* ACE_HAS_EXPLICIT_STATIC_TEMPLATE_MEMBER_INSTANTIATION */
 
 #endif /* ACE_TEST_CONFIG_H */

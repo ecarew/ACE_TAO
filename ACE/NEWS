@@ -1,6 +1,32 @@
 USER VISIBLE CHANGES BETWEEN ACE-8.0.8 and ACE-8.0.9
 ====================================================
 
+. The singleton templates (ACE_Singleton, ACE_Unmanaged_Singleton,
+  ACE_TSS_Singleton, ACE_Unmanaged_TSS_Singleton, ACE_DLL_Singleton_T)
+  publish the instance through a std::atomic pointer: the unlocked first
+  check of their double-checked locking is an acquire load and the
+  instance is stored with release after construction. Before, a thread
+  could see the pointer before the object it points to was constructed
+  (a data race reported by ThreadSanitizer; a real hazard on ARM and
+  other weakly ordered CPUs). singleton_ and instance_i () change type
+  accordingly; code that explicitly instantiates singleton_ must use the
+  std::atomic type (ACE_SINGLETON_TEMPLATE_INSTANTIATE does).
+  ACE_Object_Manager::get_singleton_lock () reads and sets the caller's
+  lock pointer only under its internal lock once the program is
+  multi-threaded. ACE_DLL_Singleton_T registers its framework component
+  once, by the thread that creates the instance.
+
+. ACE_Dynamic's thread-specific singleton uses a real mutex instead of
+  ACE_Null_Mutex: the first ACE_Svc_Handler allocations on several
+  threads could each create it.
+
+. ACE_Thread_Exit::instance ()'s double-checked flag and ACE_TSS<TYPE>'s
+  "key created" flag (once_, which was only volatile) are atomic.
+
+. ACE_Thread_Descriptor::acquire_release () reads the thread state for
+  its debug assertion under the thread manager's lock, which is what
+  wait_grp () holds when it changes that state.
+
 . ACE_SSL_Asynch_Stream: the BIO method table shared by all streams is
   built once, thread-safely; streams opened on several threads at the same
   time could build it twice and leak one. A failed SSL_read() or

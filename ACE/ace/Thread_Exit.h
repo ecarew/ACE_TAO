@@ -20,6 +20,7 @@
 #endif /* ACE_LACKS_PRAGMA_ONCE */
 
 #include "ace/Thread_Control.h"
+#include <atomic>
 
 ACE_BEGIN_VERSIONED_NAMESPACE_DECL
 
@@ -71,7 +72,9 @@ private:
    * See bug #526.
    * We don't follow the singleton pattern due to dependency issues.
    */
-  static bool is_constructed_;
+  /// Atomic: instance () checks it without the lock (double-checked
+  /// locking).
+  static std::atomic<bool> is_constructed_;
 };
 
 /**

@@ -5,7 +5,7 @@
 
 ACE_BEGIN_VERSIONED_NAMESPACE_DECL
 
-bool ACE_Thread_Exit::is_constructed_ = false;
+std::atomic<bool> ACE_Thread_Exit::is_constructed_ {false};
 
 void
 ACE_Thread_Exit::cleanup (void *instance)

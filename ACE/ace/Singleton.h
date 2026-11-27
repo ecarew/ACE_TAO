@@ -20,6 +20,7 @@
 
 #include /**/ "ace/config-all.h"
 #include "ace/TSS_T.h"
+#include <atomic>
 #include "ace/Cleanup.h"
 
 #if !defined (ACE_LACKS_PRAGMA_ONCE)
@@ -101,10 +102,10 @@ protected:
   TYPE instance_;
 
   /// Pointer to the Singleton (ACE_Cleanup) instance.
-  static ACE_Singleton<TYPE, ACE_LOCK> *singleton_;
+  static std::atomic<ACE_Singleton<TYPE, ACE_LOCK> *> singleton_;
 
   /// Get pointer to the Singleton instance.
-  static ACE_Singleton<TYPE, ACE_LOCK> *&instance_i ();
+  static std::atomic<ACE_Singleton<TYPE, ACE_LOCK> *> &instance_i ();
 };
 
 /**
@@ -145,10 +146,10 @@ protected:
   ACE_Unmanaged_Singleton ();
 
   /// Pointer to the Singleton (ACE_Cleanup) instance.
-  static ACE_Unmanaged_Singleton<TYPE, ACE_LOCK> *singleton_;
+  static std::atomic<ACE_Unmanaged_Singleton<TYPE, ACE_LOCK> *> singleton_;
 
   /// Get pointer to the Singleton instance.
-  static ACE_Unmanaged_Singleton<TYPE, ACE_LOCK> *&instance_i ();
+  static std::atomic<ACE_Unmanaged_Singleton<TYPE, ACE_LOCK> *> &instance_i ();
 };
 
 /**
@@ -197,10 +198,10 @@ protected:
   ACE_TSS_Singleton (const ACE_TSS_Singleton<TYPE,ACE_LOCK> &) = delete;
 
   /// Pointer to the Singleton (ACE_Cleanup) instance.
-  static ACE_TSS_Singleton<TYPE, ACE_LOCK> *singleton_;
+  static std::atomic<ACE_TSS_Singleton<TYPE, ACE_LOCK> *> singleton_;
 
   /// Get pointer to the TSS Singleton instance.
-  static ACE_TSS_Singleton<TYPE, ACE_LOCK> *&instance_i ();
+  static std::atomic<ACE_TSS_Singleton<TYPE, ACE_LOCK> *> &instance_i ();
 };
 
 /**
@@ -237,10 +238,10 @@ protected:
   ACE_Unmanaged_TSS_Singleton ();
 
   /// Pointer to the Singleton (ACE_Cleanup) instance.
-  static ACE_Unmanaged_TSS_Singleton<TYPE, ACE_LOCK> *singleton_;
+  static std::atomic<ACE_Unmanaged_TSS_Singleton<TYPE, ACE_LOCK> *> singleton_;
 
   /// Get pointer to the Singleton instance.
-  static ACE_Unmanaged_TSS_Singleton<TYPE, ACE_LOCK> *&instance_i ();
+  static std::atomic<ACE_Unmanaged_TSS_Singleton<TYPE, ACE_LOCK> *> &instance_i ();
 };
 
 /**
@@ -302,10 +303,10 @@ protected:
   TYPE instance_;
 
   /// Pointer to the Singleton instance.
-  static ACE_DLL_Singleton_T<TYPE, ACE_LOCK> *singleton_;
+  static std::atomic<ACE_DLL_Singleton_T<TYPE, ACE_LOCK> *> singleton_;
 
   /// Get pointer to the singleton instance.
-  static ACE_DLL_Singleton_T<TYPE, ACE_LOCK> *&instance_i ();
+  static std::atomic<ACE_DLL_Singleton_T<TYPE, ACE_LOCK> *> &instance_i ();
 };
 
 template <class TYPE>

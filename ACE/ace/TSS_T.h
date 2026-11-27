@@ -13,6 +13,7 @@
 #include /**/ "ace/pre.h"
 
 #include "ace/Lock.h"
+#include <atomic>
 
 #if !defined (ACE_LACKS_PRAGMA_ONCE)
 # pragma once
@@ -190,7 +191,9 @@ protected:
   ACE_Thread_Mutex keylock_;
 
   /// "First time in" flag.
-  volatile bool once_;
+  /// Atomic (not just volatile): ts_get () checks it without the lock,
+  /// and it must publish key_, which ts_init () creates just before it.
+  std::atomic<bool> once_;
 
   /// Key for the thread-specific error data.
   ACE_thread_key_t key_;

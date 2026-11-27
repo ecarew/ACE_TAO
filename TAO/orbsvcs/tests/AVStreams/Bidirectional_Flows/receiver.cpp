@@ -324,5 +324,5 @@ ACE_TMAIN (int argc,
 }
 
 #if defined (ACE_HAS_EXPLICIT_STATIC_TEMPLATE_MEMBER_INSTANTIATION)
-template ACE_Unmanaged_Singleton<Receiver, ACE_Null_Mutex> *ACE_Unmanaged_Singleton<Receiver, ACE_Null_Mutex>::singleton_;
+template std::atomic<ACE_Unmanaged_Singleton<Receiver, ACE_Null_Mutex> *> ACE_Unmanaged_Singleton<Receiver, ACE_Null_Mutex>::singleton_;
 #endif /* ACE_HAS_EXPLICIT_STATIC_TEMPLATE_MEMBER_INSTANTIATION */

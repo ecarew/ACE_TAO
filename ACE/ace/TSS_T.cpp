@@ -94,7 +94,7 @@ ACE_TSS<TYPE>::dump () const
   ACELIB_DEBUG ((LM_DEBUG, ACE_BEGIN_DUMP, this));
   this->keylock_.dump ();
   ACELIB_DEBUG ((LM_DEBUG, ACE_TEXT ("key_ = %d\n"), this->key_));
-  ACELIB_DEBUG ((LM_DEBUG, ACE_TEXT ("\nonce_ = %d\n"), this->once_));
+  ACELIB_DEBUG ((LM_DEBUG, ACE_TEXT ("\nonce_ = %d\n"), this->once_.load ()));
   ACELIB_DEBUG ((LM_DEBUG, ACE_END_DUMP));
 #endif /* defined (ACE_HAS_THREADS) && (defined (ACE_HAS_THREAD_SPECIFIC_STORAGE) || defined (ACE_HAS_TSS_EMULATION)) */
 #endif /* ACE_HAS_DUMP */
